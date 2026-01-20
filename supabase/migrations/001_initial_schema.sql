@@ -1,0 +1,109 @@
+-- Enable pgvector extension for embeddings
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- Documents table
+CREATE TABLE documents (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    filename TEXT NOT NULL,
+    file_path TEXT,
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Document chunks with embeddings
+CREATE TABLE document_chunks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    content TEXT NOT NULL,
+    embedding vector(768),  -- Gemini text-embedding-004 dimensions
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Research sessions
+CREATE TABLE research_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    query TEXT NOT NULL,
+    status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'completed', 'failed')),
+    result JSONB,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Agent execution logs
+CREATE TABLE agent_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id UUID NOT NULL REFERENCES research_sessions(id) ON DELETE CASCADE,
+    agent_name TEXT NOT NULL,
+    events JSONB DEFAULT '{}',
+    latency_ms INTEGER,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- User feedback
+CREATE TABLE feedback (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id UUID NOT NULL REFERENCES research_sessions(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
+    comment TEXT,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Indexes for performance
+CREATE INDEX idx_documents_user_id ON documents(user_id);
+CREATE INDEX idx_document_chunks_document_id ON document_chunks(document_id);
+CREATE INDEX idx_research_sessions_user_id ON research_sessions(user_id);
+CREATE INDEX idx_agent_logs_session_id ON agent_logs(session_id);
+
+-- Vector similarity search index (IVFFlat for large datasets)
+CREATE INDEX idx_document_chunks_embedding ON document_chunks 
+    USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+
+-- Full-text search index for sparse retrieval
+CREATE INDEX idx_document_chunks_content_fts ON document_chunks 
+    USING gin(to_tsvector('english', content));
+
+-- Row Level Security Policies
+ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE document_chunks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE research_sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE feedback ENABLE ROW LEVEL SECURITY;
+
+-- Documents: users can only access their own
+CREATE POLICY "Users can view own documents" ON documents
+    FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "Users can insert own documents" ON documents
+    FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can delete own documents" ON documents
+    FOR DELETE USING (auth.uid() = user_id);
+
+-- Chunks: access through document ownership
+CREATE POLICY "Users can view chunks of own documents" ON document_chunks
+    FOR SELECT USING (
+        EXISTS (SELECT 1 FROM documents WHERE documents.id = document_chunks.document_id AND documents.user_id = auth.uid())
+    );
+CREATE POLICY "Users can insert chunks to own documents" ON document_chunks
+    FOR INSERT WITH CHECK (
+        EXISTS (SELECT 1 FROM documents WHERE documents.id = document_chunks.document_id AND documents.user_id = auth.uid())
+    );
+
+-- Research sessions: users can only access their own
+CREATE POLICY "Users can view own sessions" ON research_sessions
+    FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "Users can insert own sessions" ON research_sessions
+    FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+-- Agent logs: access through session ownership
+CREATE POLICY "Users can view logs of own sessions" ON agent_logs
+    FOR SELECT USING (
+        EXISTS (SELECT 1 FROM research_sessions WHERE research_sessions.id = agent_logs.session_id AND research_sessions.user_id = auth.uid())
+    );
+
+-- Feedback: users can only access their own
+CREATE POLICY "Users can view own feedback" ON feedback
+    FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "Users can insert own feedback" ON feedback
+    FOR INSERT WITH CHECK (auth.uid() = user_id);

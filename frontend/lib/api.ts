@@ -1,0 +1,135 @@
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+export interface ResearchResponse {
+    session_id: string;
+    query: string;
+    answer: string;
+    sources: Source[];
+    verification: Verification;
+    confidence: string;
+    total_latency_ms: number;
+}
+
+export interface Source {
+    chunk_id?: string;
+    document_id?: string;
+    url?: string;
+    title?: string;
+    content: string;
+    score: number;
+    type: "internal" | "web";
+}
+
+export interface Verification {
+    verification_status: string;
+    confidence_score: number;
+    verified_claims: Array<{
+        claim: string;
+        source: number;
+        status: string;
+    }>;
+    unsupported_claims: Array<{
+        claim: string;
+        reason: string;
+    }>;
+    overall_assessment: string;
+}
+
+export interface AgentTimeline {
+    session_id: string;
+    timeline: Array<{
+        agent: string;
+        events: Record<string, unknown>;
+        latency_ms: number;
+        timestamp: string;
+    }>;
+}
+
+export interface Document {
+    id: string;
+    filename: string;
+    created_at: string;
+}
+
+export async function research(
+    query: string,
+    useWeb: boolean = true,
+    documentIds?: string[]
+): Promise<ResearchResponse> {
+    const response = await fetch(`${API_BASE_URL}/api/research/query`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            query,
+            use_web: useWeb,
+            document_ids: documentIds,
+        }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Research failed: ${response.statusText}`);
+    }
+
+    return response.json();
+}
+
+export async function getTimeline(sessionId: string): Promise<AgentTimeline> {
+    const response = await fetch(
+        `${API_BASE_URL}/api/research/${sessionId}/timeline`
+    );
+
+    if (!response.ok) {
+        throw new Error(`Failed to fetch timeline: ${response.statusText}`);
+    }
+
+    return response.json();
+}
+
+export async function uploadDocument(file: File): Promise<Document> {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const response = await fetch(`${API_BASE_URL}/api/documents/upload`, {
+        method: "POST",
+        body: formData,
+    });
+
+    if (!response.ok) {
+        throw new Error(`Upload failed: ${response.statusText}`);
+    }
+
+    return response.json();
+}
+
+export async function listDocuments(): Promise<{
+    documents: Document[];
+    total: number;
+}> {
+    const response = await fetch(`${API_BASE_URL}/api/documents/`);
+
+    if (!response.ok) {
+        throw new Error(`Failed to list documents: ${response.statusText}`);
+    }
+
+    return response.json();
+}
+
+export async function submitFeedback(
+    sessionId: string,
+    rating: number,
+    comment?: string
+): Promise<void> {
+    const response = await fetch(`${API_BASE_URL}/api/feedback/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            session_id: sessionId,
+            rating,
+            comment,
+        }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Failed to submit feedback: ${response.statusText}`);
+    }
+}

@@ -1,0 +1,33 @@
+[project]
+name = "revera-backend"
+version = "0.1.0"
+description = "Multi-Agent Research Tool Backend"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "python-multipart>=0.0.6",
+    "supabase>=2.3.0",
+    "google-genai>=1.0.0",
+    "pymupdf>=1.24.0",
+    "httpx>=0.26.0",
+    "tavily-python>=0.5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.1.0",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
