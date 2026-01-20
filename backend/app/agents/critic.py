@@ -77,7 +77,6 @@ Check each claim and citation. Output verification results in JSON format."""
         response = self.gemini.generate_json(
             prompt=prompt,
             system_instruction=CRITIC_SYSTEM_PROMPT,
-            use_fast_model=False,
             temperature=0.2,
         )
 

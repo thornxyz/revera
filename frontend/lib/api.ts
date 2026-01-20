@@ -51,14 +51,24 @@ export interface Document {
     created_at: string;
 }
 
+async function getAuthHeaders(): Promise<HeadersInit> {
+    const { getAccessToken } = await import("@/lib/supabase");
+    const token = await getAccessToken();
+    return {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
+}
+
 export async function research(
     query: string,
     useWeb: boolean = true,
     documentIds?: string[]
 ): Promise<ResearchResponse> {
+    const headers = await getAuthHeaders();
     const response = await fetch(`${API_BASE_URL}/api/research/query`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
             query,
             use_web: useWeb,
@@ -74,8 +84,10 @@ export async function research(
 }
 
 export async function getTimeline(sessionId: string): Promise<AgentTimeline> {
+    const headers = await getAuthHeaders();
     const response = await fetch(
-        `${API_BASE_URL}/api/research/${sessionId}/timeline`
+        `${API_BASE_URL}/api/research/${sessionId}/timeline`,
+        { headers }
     );
 
     if (!response.ok) {
@@ -86,11 +98,15 @@ export async function getTimeline(sessionId: string): Promise<AgentTimeline> {
 }
 
 export async function uploadDocument(file: File): Promise<Document> {
+    const { getAccessToken } = await import("@/lib/supabase");
+    const token = await getAccessToken();
+
     const formData = new FormData();
     formData.append("file", file);
 
     const response = await fetch(`${API_BASE_URL}/api/documents/upload`, {
         method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: formData,
     });
 
@@ -105,7 +121,8 @@ export async function listDocuments(): Promise<{
     documents: Document[];
     total: number;
 }> {
-    const response = await fetch(`${API_BASE_URL}/api/documents/`);
+    const headers = await getAuthHeaders();
+    const response = await fetch(`${API_BASE_URL}/api/documents/`, { headers });
 
     if (!response.ok) {
         throw new Error(`Failed to list documents: ${response.statusText}`);
@@ -119,9 +136,10 @@ export async function submitFeedback(
     rating: number,
     comment?: string
 ): Promise<void> {
+    const headers = await getAuthHeaders();
     const response = await fetch(`${API_BASE_URL}/api/feedback/`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
             session_id: sessionId,
             rating,

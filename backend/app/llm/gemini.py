@@ -3,7 +3,7 @@
 from google import genai
 from google.genai import types
 
-from app.core.config import get_settings
+from app.core.config import get_settings, GEMINI_EMBEDDING_MODEL, GEMINI_MODEL
 
 
 class GeminiClient:
@@ -12,9 +12,8 @@ class GeminiClient:
     def __init__(self):
         settings = get_settings()
         self.client = genai.Client(api_key=settings.gemini_api_key)
-        self.embedding_model = settings.gemini_embedding_model
-        self.reasoning_model = settings.gemini_reasoning_model
-        self.fast_model = settings.gemini_fast_model
+        self.embedding_model = GEMINI_EMBEDDING_MODEL
+        self.model = GEMINI_MODEL
 
     def embed_text(self, text: str) -> list[float]:
         """Generate embedding for a single text."""
@@ -36,13 +35,10 @@ class GeminiClient:
         self,
         prompt: str,
         system_instruction: str | None = None,
-        use_fast_model: bool = False,
         temperature: float = 0.7,
         max_tokens: int = 4096,
     ) -> str:
         """Generate text response from LLM."""
-        model = self.fast_model if use_fast_model else self.reasoning_model
-
         config = types.GenerateContentConfig(
             temperature=temperature,
             max_output_tokens=max_tokens,
@@ -52,7 +48,7 @@ class GeminiClient:
             config.system_instruction = system_instruction
 
         response = self.client.models.generate_content(
-            model=model,
+            model=self.model,
             contents=prompt,
             config=config,
         )
@@ -62,12 +58,9 @@ class GeminiClient:
         self,
         prompt: str,
         system_instruction: str | None = None,
-        use_fast_model: bool = False,
         temperature: float = 0.3,
     ) -> str:
         """Generate structured JSON response."""
-        model = self.fast_model if use_fast_model else self.reasoning_model
-
         config = types.GenerateContentConfig(
             temperature=temperature,
             response_mime_type="application/json",
@@ -77,7 +70,7 @@ class GeminiClient:
             config.system_instruction = system_instruction
 
         response = self.client.models.generate_content(
-            model=model,
+            model=self.model,
             contents=prompt,
             config=config,
         )

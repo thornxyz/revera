@@ -74,8 +74,8 @@ flowchart TB
 | Frontend | Next.js 16, TypeScript, Tailwind CSS, shadcn/ui |
 | Backend | FastAPI, Python 3.12, uv |
 | Database | Supabase (Postgres + pgvector) |
-| AI | Google Gemini (text-embedding-004, gemini-1.5-pro/flash) |
-| Search | Tavily API (optional) |
+| AI | Google Gemini (gemini-embedding-001, gemini-3-flash-preview) |
+| Search | Tavily API |
 
 ## Project Structure
 
@@ -111,7 +111,7 @@ revera/
 cd backend
 cp .env.example .env  # Add your API keys
 uv sync
-uv run uvicorn app.main:app --reload
+uv run main.py
 
 # Frontend
 cd frontend
@@ -124,19 +124,27 @@ pnpm dev
 
 **Backend** (`.env`):
 ```
-SUPABASE_URL=your-project.supabase.co
+DEBUG=false
+SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your-anon-key
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 GEMINI_API_KEY=your-gemini-key
-WEB_SEARCH_API_KEY=your-tavily-key  # Optional
+TAVILY_API_KEY=your-tavily-key
 ```
 
 **Frontend** (`.env.local`):
 ```
 NEXT_PUBLIC_API_URL=http://localhost:8000
-NEXT_PUBLIC_SUPABASE_URL=your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 ```
+
+### Authentication
+
+Google OAuth is the only sign-in method. To enable:
+1. Go to Supabase Dashboard → Authentication → Providers → Google
+2. Add your Google OAuth credentials
+3. Set redirect URL: `https://your-project.supabase.co/auth/v1/callback`
 
 ## API Endpoints
 

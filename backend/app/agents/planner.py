@@ -90,7 +90,6 @@ Output the plan as JSON."""
         response = self.gemini.generate_json(
             prompt=prompt,
             system_instruction=PLANNER_SYSTEM_PROMPT,
-            use_fast_model=False,  # Use reasoning model for planning
             temperature=0.3,
         )
 

@@ -2,9 +2,9 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from uuid import UUID
 
 from app.core.database import get_supabase_client
+from app.core.auth import get_current_user_id
 
 
 router = APIRouter()
@@ -23,12 +23,6 @@ class FeedbackResponse(BaseModel):
 
     id: str
     status: str
-
-
-# TODO: Replace with actual auth dependency
-async def get_current_user_id() -> str:
-    """Placeholder for auth - returns mock user ID."""
-    return "00000000-0000-0000-0000-000000000001"
 
 
 @router.post("/", response_model=FeedbackResponse)

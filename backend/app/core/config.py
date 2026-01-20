@@ -1,5 +1,11 @@
-from pydantic_settings import BaseSettings
+from pathlib import Path
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
+
+
+# Gemini Models (hardcoded, not from env)
+GEMINI_EMBEDDING_MODEL = "gemini-embedding-001"
+GEMINI_MODEL = "gemini-3-flash-preview"
 
 
 class Settings(BaseSettings):
@@ -16,17 +22,14 @@ class Settings(BaseSettings):
 
     # Google Gemini
     gemini_api_key: str
-    gemini_embedding_model: str = "models/text-embedding-004"
-    gemini_reasoning_model: str = "gemini-1.5-pro"
-    gemini_fast_model: str = "gemini-1.5-flash"
 
-    # Web Search (optional for now)
-    web_search_api_key: str | None = None
-    web_search_provider: str = "tavily"  # tavily, serper, bing
+    # Web Search (Tavily)
+    tavily_api_key: str | None = None
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    model_config = SettingsConfigDict(
+        env_file=Path(__file__).parent.parent.parent / ".env",
+        env_file_encoding="utf-8",
+    )
 
 
 @lru_cache

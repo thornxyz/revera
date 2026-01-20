@@ -43,7 +43,7 @@ RETURNS TABLE (
     document_id UUID,
     content TEXT,
     metadata JSONB,
-    rank FLOAT
+    rank DOUBLE PRECISION
 )
 LANGUAGE plpgsql
 AS $$
@@ -54,7 +54,7 @@ BEGIN
         dc.document_id,
         dc.content,
         dc.metadata,
-        ts_rank(to_tsvector('english', dc.content), to_tsquery('english', search_query)) AS rank
+        ts_rank(to_tsvector('english', dc.content), to_tsquery('english', search_query))::double precision AS rank
     FROM document_chunks dc
     JOIN documents d ON d.id = dc.document_id
     WHERE d.user_id = user_id_param
@@ -64,3 +64,4 @@ BEGIN
     LIMIT match_count;
 END;
 $$;
+

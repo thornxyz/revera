@@ -1,11 +1,15 @@
 """Research API routes."""
 
+import logging
+import traceback
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from uuid import UUID
 
 from app.agents.orchestrator import Orchestrator
+from app.core.auth import get_current_user_id
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -37,12 +41,6 @@ class AgentTimelineResponse(BaseModel):
     timeline: list[dict]
 
 
-# TODO: Replace with actual auth dependency
-async def get_current_user_id() -> str:
-    """Placeholder for auth - returns mock user ID."""
-    return "00000000-0000-0000-0000-000000000001"
-
-
 @router.post("/query", response_model=ResearchResponse)
 async def create_research_query(
     request: ResearchRequest,
@@ -58,12 +56,25 @@ async def create_research_query(
     4. Synthesizes an answer with citations
     5. Verifies the answer against sources
     """
+    logger.info(f"[RESEARCH] Starting query: {request.query[:50]}...")
+    logger.info(f"[RESEARCH] User ID: {user_id}")
+    logger.info(
+        f"[RESEARCH] Use web: {request.use_web}, Doc IDs: {request.document_ids}"
+    )
+
     try:
+        logger.info("[RESEARCH] Creating orchestrator...")
         orchestrator = Orchestrator(user_id)
+
+        logger.info("[RESEARCH] Running research...")
         result = await orchestrator.research(
             query=request.query,
             use_web=request.use_web,
             document_ids=request.document_ids,
+        )
+
+        logger.info(
+            f"[RESEARCH] Complete! Session: {result.session_id}, Latency: {result.total_latency_ms}ms"
         )
 
         return ResearchResponse(
@@ -76,6 +87,8 @@ async def create_research_query(
             total_latency_ms=result.total_latency_ms,
         )
     except Exception as e:
+        logger.error(f"[RESEARCH] ERROR: {str(e)}")
+        logger.error(f"[RESEARCH] Traceback:\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -86,6 +99,8 @@ async def get_session_timeline(
 ):
     """Get the agent execution timeline for a session."""
     from app.core.database import get_supabase_client
+
+    logger.info(f"[TIMELINE] Getting timeline for session: {session_id}")
 
     supabase = get_supabase_client()
 

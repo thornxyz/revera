@@ -48,8 +48,8 @@ class WebSearchAgent(BaseAgent):
         self.gemini = get_gemini_client()
 
         # Initialize Tavily client if API key is available
-        if self.settings.web_search_api_key:
-            self.tavily = AsyncTavilyClient(api_key=self.settings.web_search_api_key)
+        if self.settings.tavily_api_key:
+            self.tavily = AsyncTavilyClient(api_key=self.settings.tavily_api_key)
         else:
             self.tavily = None
 
@@ -116,7 +116,6 @@ class WebSearchAgent(BaseAgent):
         prompt = QUERY_REWRITE_PROMPT.format(query=query)
         rewritten = self.gemini.generate(
             prompt=prompt,
-            use_fast_model=True,
             temperature=0.3,
             max_tokens=50,
         )

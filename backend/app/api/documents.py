@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from uuid import UUID
 
 from app.services.ingestion import get_ingestion_service
+from app.core.auth import get_current_user_id
 
 
 router = APIRouter()
@@ -23,12 +24,6 @@ class DocumentListResponse(BaseModel):
 
     documents: list[DocumentResponse]
     total: int
-
-
-# TODO: Replace with actual auth dependency
-async def get_current_user_id() -> str:
-    """Placeholder for auth - returns mock user ID."""
-    return "00000000-0000-0000-0000-000000000001"
 
 
 @router.post("/upload", response_model=DocumentResponse)

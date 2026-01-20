@@ -89,7 +89,6 @@ Produce a well-cited answer in JSON format."""
         response = self.gemini.generate_json(
             prompt=prompt,
             system_instruction=SYNTHESIS_SYSTEM_PROMPT,
-            use_fast_model=True,  # Use fast model for synthesis
             temperature=0.5,
         )
 

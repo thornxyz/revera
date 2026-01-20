@@ -6,13 +6,30 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { research, ResearchResponse, Source } from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
+import { LoginPage } from "@/components/login-page";
 
 export default function ResearchPage() {
+  const { user, loading, signOut } = useAuth();
   const [query, setQuery] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<ResearchResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showSources, setShowSources] = useState(false);
+
+  // Show loading state
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-neutral-950 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-violet-500"></div>
+      </div>
+    );
+  }
+
+  // Show login page if not authenticated
+  if (!user) {
+    return <LoginPage />;
+  }
 
   const handleSubmit = async () => {
     if (!query.trim()) return;
@@ -42,13 +59,26 @@ export default function ResearchPage() {
       {/* Main Content */}
       <div className="flex-1 flex flex-col">
         {/* Header */}
-        <header className="border-b border-neutral-800 px-6 py-4">
-          <h1 className="text-2xl font-bold bg-gradient-to-r from-violet-400 to-cyan-400 bg-clip-text text-transparent">
-            Revera
-          </h1>
-          <p className="text-sm text-neutral-400">
-            Multi-Agent Research Tool
-          </p>
+        <header className="border-b border-neutral-800 px-6 py-4 flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold bg-gradient-to-r from-violet-400 to-cyan-400 bg-clip-text text-transparent">
+              Revera
+            </h1>
+            <p className="text-sm text-neutral-400">
+              Multi-Agent Research Tool
+            </p>
+          </div>
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-neutral-400">{user.email}</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={signOut}
+              className="text-neutral-400 hover:text-neutral-200"
+            >
+              Sign Out
+            </Button>
+          </div>
         </header>
 
         {/* Research Results */}
