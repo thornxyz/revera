@@ -136,6 +136,19 @@ export async function listDocuments(): Promise<{
     return response.json();
 }
 
+export async function deleteDocument(documentId: string): Promise<void> {
+    const headers = await getAuthHeaders();
+    const response = await fetch(`${API_BASE_URL}/api/documents/${documentId}`, {
+        method: "DELETE",
+        headers,
+    });
+
+    if (!response.ok) {
+        throw new Error(`Delete failed: ${response.statusText}`);
+    }
+}
+
+
 export async function submitFeedback(
     sessionId: string,
     rating: number,

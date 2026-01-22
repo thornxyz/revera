@@ -1,9 +1,12 @@
-"""Hybrid search service - Dense (vector) + Sparse (keyword) retrieval."""
+"""Hybrid search service - Dense (Gemini) + Sparse (BM25) + Late Interaction (ColBERT)."""
 
 from uuid import UUID
 from dataclasses import dataclass
 
-from app.core.database import get_supabase_client
+from fastembed import TextEmbedding, SparseTextEmbedding, LateInteractionTextEmbedding
+from qdrant_client import models
+
+from app.core.qdrant import get_qdrant_service
 from app.llm.gemini import get_gemini_client
 
 
@@ -15,24 +18,26 @@ class SearchResult:
     document_id: str
     content: str
     metadata: dict
-    dense_score: float = 0.0
-    sparse_score: float = 0.0
-    combined_score: float = 0.0
+    score: float
 
 
 class HybridSearchService:
     """
-    Hybrid search combining dense (vector) and sparse (keyword) retrieval.
-
-    Uses Reciprocal Rank Fusion (RRF) to combine results.
+    Triple Hybrid Search:
+    1. Dense (Gemini)
+    2. Sparse (BM25)
+    3. Late Interaction (ColBERT)
     """
 
     def __init__(self):
-        self.supabase = get_supabase_client()
+        self.qdrant = get_qdrant_service()
         self.gemini = get_gemini_client()
-        self.dense_weight = 0.6
-        self.sparse_weight = 0.4
-        self.rrf_k = 60  # RRF constant
+
+        # Initialize Local Models for Query Embedding
+        self.colbert_model = LateInteractionTextEmbedding(
+            model_name="colbert-ir/colbertv2.0"
+        )
+        self.sparse_model = SparseTextEmbedding(model_name="Qdrant/bm25")
 
     async def search(
         self,
@@ -42,153 +47,94 @@ class HybridSearchService:
         document_ids: list[UUID] | None = None,
     ) -> list[SearchResult]:
         """
-        Perform hybrid search across user's documents.
-
-        Args:
-            query: Search query
-            user_id: User ID for document filtering
-            top_k: Number of results to return
-            document_ids: Optional list of document IDs to search within
-
-        Returns:
-            List of SearchResult objects ranked by combined score
+        Perform 3-way hybrid search using Qdrant.
         """
-        # Get more candidates than needed for fusion
-        candidate_k = top_k * 3
+        # 1. Generate Query Embeddings
+        # A. Dense (Gemini)
+        dense_query = self.gemini.embed_text(query)
 
-        # Run dense and sparse search in parallel
-        dense_results = await self._dense_search(
-            query, user_id, candidate_k, document_ids
+        # B. Sparse (BM25)
+        # fastembed returns generator
+        sparse_gen = list(self.sparse_model.query_embed(query))[0]
+        sparse_query = models.SparseVector(
+            indices=sparse_gen.indices.tolist(),
+            values=sparse_gen.values.tolist(),
         )
-        sparse_results = await self._sparse_search(
-            query, user_id, candidate_k, document_ids
+
+        # C. Late Interaction (ColBERT)
+        colbert_gen = list(self.colbert_model.query_embed(query))[0]
+        # Ensure it's a list of vectors for ColBERT (Multi-Vector)
+        colbert_query = (
+            colbert_gen.tolist() if hasattr(colbert_gen, "tolist") else colbert_gen
         )
 
-        # Fuse results using RRF
-        fused = self._reciprocal_rank_fusion(dense_results, sparse_results)
-
-        # Return top K
-        return fused[:top_k]
-
-    async def _dense_search(
-        self,
-        query: str,
-        user_id: UUID,
-        top_k: int,
-        document_ids: list[UUID] | None = None,
-    ) -> list[SearchResult]:
-        """Vector similarity search using embeddings."""
-        # Generate query embedding
-        query_embedding = self.gemini.embed_text(query)
-
-        # Build the query - using pgvector similarity search
-        # Note: This uses a Supabase RPC function for vector search
-        params = {
-            "query_embedding": query_embedding,
-            "user_id_param": str(user_id),
-            "match_count": top_k,
-        }
+        # 2. Build Filter
+        must_conditions = [
+            models.FieldCondition(
+                key="user_id", match=models.MatchValue(value=str(user_id))
+            )
+        ]
 
         if document_ids:
-            params["document_ids"] = [str(d) for d in document_ids]
-
-        # Call the vector search RPC function
-        result = self.supabase.rpc("match_document_chunks", params).execute()
-
-        results = []
-        data = result.data if isinstance(result.data, list) else []  # type: ignore
-        for i, row in enumerate(data):  # type: ignore
-            row_dict = dict(row) if not isinstance(row, dict) else row  # type: ignore
-            results.append(
-                SearchResult(
-                    chunk_id=str(row_dict.get("id", "")),  # type: ignore
-                    document_id=str(row_dict.get("document_id", "")),  # type: ignore
-                    content=str(row_dict.get("content", "")),  # type: ignore
-                    metadata=row_dict.get("metadata", {}),  # type: ignore
-                    dense_score=float(1 - float(row_dict.get("distance", 0))),  # type: ignore
+            must_conditions.append(
+                models.FieldCondition(
+                    key="document_id",
+                    match=models.MatchAny(any=[str(d) for d in document_ids]),
                 )
             )
 
-        return results
+        filter_ = models.Filter(must=must_conditions)
 
-    async def _sparse_search(
-        self,
-        query: str,
-        user_id: UUID,
-        top_k: int,
-        document_ids: list[UUID] | None = None,
-    ) -> list[SearchResult]:
-        """Keyword-based full-text search using Postgres FTS."""
-        # Build the full-text search query
-        # Format query for tsquery (replace spaces with &)
-        ts_query = " & ".join(query.split())
+        # 3. Execute Search with Prefetch
+        # Strategy:
+        # - Prefetch with Dense (Semantic Candidate Generation)
+        # - Prefetch with Sparse (Keyword Candidate Generation)
+        # - Rescore with ColBERT (Late Interaction) using RRF or direct reranking via multivector
 
-        params = {
-            "search_query": ts_query,
-            "user_id_param": str(user_id),
-            "match_count": top_k,
-        }
+        # Note: Depending on Qdrant version, we can do
+        # Query(ColBERT) -> Prefetch(Dense) + Prefetch(Sparse)
 
-        if document_ids:
-            params["document_ids"] = [str(d) for d in document_ids]
+        # Let's try a robust prefetch strategy:
+        # Retrieve candidates using Dense and Sparse, then rescore with ColBERT.
 
-        # Call the full-text search RPC function
-        result = self.supabase.rpc("search_document_chunks_fts", params).execute()
+        prefetch = [
+            models.Prefetch(
+                query=dense_query,
+                using="dense",
+                limit=top_k * 2,
+                filter=filter_,
+            ),
+            models.Prefetch(
+                query=sparse_query,
+                using="sparse",
+                limit=top_k * 2,
+                filter=filter_,
+            ),
+        ]
 
-        results = []
-        data = result.data if isinstance(result.data, list) else []  # type: ignore
-        for row in data:  # type: ignore
-            row_dict = dict(row) if not isinstance(row, dict) else row  # type: ignore
-            results.append(
+        results = self.qdrant.get_client().query_points(
+            collection_name=self.qdrant.collection_name,
+            prefetch=prefetch,
+            query=colbert_query,
+            using="colbert",
+            limit=top_k,
+        )
+
+        # 4. Format Results
+        search_results = []
+        for point in results.points:
+            payload = point.payload or {}
+            search_results.append(
                 SearchResult(
-                    chunk_id=str(row_dict.get("id", "")),  # type: ignore
-                    document_id=str(row_dict.get("document_id", "")),  # type: ignore
-                    content=str(row_dict.get("content", "")),  # type: ignore
-                    metadata=row_dict.get("metadata", {}),  # type: ignore
-                    sparse_score=float(row_dict.get("rank", 0)),  # type: ignore
+                    chunk_id=str(point.id),
+                    document_id=str(payload.get("document_id", "")),
+                    content=str(payload.get("content", "")),
+                    metadata=payload.get("metadata", {}),
+                    score=point.score,
                 )
             )
 
-        return results
-
-    def _reciprocal_rank_fusion(
-        self,
-        dense_results: list[SearchResult],
-        sparse_results: list[SearchResult],
-    ) -> list[SearchResult]:
-        """
-        Combine results using Reciprocal Rank Fusion.
-
-        RRF score = sum(1 / (k + rank)) for each result list
-        """
-        # Create a map of chunk_id -> SearchResult
-        result_map: dict[str, SearchResult] = {}
-
-        # Process dense results
-        for rank, result in enumerate(dense_results, start=1):
-            if result.chunk_id not in result_map:
-                result_map[result.chunk_id] = result
-            result_map[result.chunk_id].dense_score = 1 / (self.rrf_k + rank)
-
-        # Process sparse results
-        for rank, result in enumerate(sparse_results, start=1):
-            if result.chunk_id not in result_map:
-                result_map[result.chunk_id] = result
-            result_map[result.chunk_id].sparse_score = 1 / (self.rrf_k + rank)
-
-        # Calculate combined scores
-        for result in result_map.values():
-            result.combined_score = (
-                self.dense_weight * result.dense_score
-                + self.sparse_weight * result.sparse_score
-            )
-
-        # Sort by combined score
-        fused = sorted(
-            result_map.values(), key=lambda r: r.combined_score, reverse=True
-        )
-
-        return fused
+        return search_results
 
 
 # Singleton

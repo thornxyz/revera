@@ -2,10 +2,14 @@
 
 import io
 from uuid import UUID
+import uuid
 
 import fitz  # PyMuPDF
+from fastembed import TextEmbedding, SparseTextEmbedding, LateInteractionTextEmbedding
+from qdrant_client import models
 
 from app.core.database import get_supabase_client
+from app.core.qdrant import get_qdrant_service
 from app.llm.gemini import get_gemini_client
 
 
@@ -15,8 +19,17 @@ class IngestionService:
     def __init__(self):
         self.supabase = get_supabase_client()
         self.gemini = get_gemini_client()
+        self.qdrant = get_qdrant_service()
         self.chunk_size = 1000  # characters
         self.chunk_overlap = 200  # characters
+
+        # Initialize Local Models
+        # Late Interaction (ColBERT)
+        self.colbert_model = LateInteractionTextEmbedding(
+            model_name="colbert-ir/colbertv2.0"
+        )
+        # Sparse (BM25)
+        self.sparse_model = SparseTextEmbedding(model_name="Qdrant/bm25")
 
     async def ingest_pdf(
         self,
@@ -25,11 +38,11 @@ class IngestionService:
         user_id: UUID,
     ) -> UUID:
         """
-        Ingest a PDF file: parse, chunk, embed, and store.
+        Ingest a PDF file: parse, chunk, embed (Triple Vectors), and store in Qdrant.
 
         Returns the document ID.
         """
-        # 1. Create document record
+        # 1. Create document record in Supabase (Metadata Source of Truth)
         doc_result = (
             self.supabase.table("documents")
             .insert(
@@ -45,8 +58,7 @@ class IngestionService:
         if not doc_result.data or len(doc_result.data) == 0:
             raise ValueError("Failed to create document record")
 
-        # Type assertion for Supabase response (Supabase typing is complex)
-        document_id = str(doc_result.data[0].get("id", ""))  # type: ignore
+        document_id = str(doc_result.data[0].get("id", ""))
         if not document_id:
             raise ValueError("Document ID not returned from database")
 
@@ -55,26 +67,73 @@ class IngestionService:
 
         # 3. Chunk the text
         chunks = self._chunk_text(text_pages)
+        if not chunks:
+            return UUID(hex=document_id)
 
-        # 4. Generate embeddings
         chunk_texts = [c["content"] for c in chunks]
-        embeddings = self.gemini.embed_texts(chunk_texts)
 
-        # 5. Store chunks with embeddings
-        chunk_records = [
-            {
+        # 4. Generate Embeddings (Triple Hybrid)
+
+        # A. Dense (Gemini) - 3072d
+        print(f"Generating Dense Embeddings for {len(chunks)} chunks...")
+        dense_embeddings = self.gemini.embed_texts(chunk_texts)
+
+        # B. Late Interaction (ColBERT) - Local
+        print("Generating Late Interaction Embeddings...")
+        # FastEmbed returns a generator, consume it
+        colbert_embeddings = list(self.colbert_model.embed(chunk_texts))
+
+        # C. Sparse (BM25) - Local
+        print("Generating Sparse Embeddings...")
+        sparse_embeddings = list(self.sparse_model.embed(chunk_texts))
+
+        # 5. Prepare Points for Qdrant
+        points = []
+        for i, chunk in enumerate(chunks):
+            # Format Late Interaction for Qdrant (Multi-Vector)
+            # FastEmbed returns list of numpy arrays for ColBERT
+            colbert_vectors = (
+                colbert_embeddings[i].tolist()
+                if hasattr(colbert_embeddings[i], "tolist")
+                else colbert_embeddings[i]
+            )
+
+            # Format Sparse for Qdrant
+            sparse_vec = sparse_embeddings[i]
+
+            payload = {
                 "document_id": document_id,
+                "user_id": str(user_id),
                 "content": chunk["content"],
-                "embedding": f"[{','.join(map(str, embeddings[i]))}]",  # Format as pgvector string
                 "metadata": chunk["metadata"],
+                "filename": filename,
             }
-            for i, chunk in enumerate(chunks)
-        ]
 
-        # Insert in batches of 50
-        for i in range(0, len(chunk_records), 50):
-            batch = chunk_records[i : i + 50]
-            self.supabase.table("document_chunks").insert(batch).execute()
+            points.append(
+                models.PointStruct(
+                    id=str(uuid.uuid4()),
+                    vector={
+                        "dense": dense_embeddings[i],
+                        "colbert": colbert_vectors,
+                        "sparse": models.SparseVector(
+                            indices=sparse_vec.indices.tolist(),
+                            values=sparse_vec.values.tolist(),
+                        ),
+                    },
+                    payload=payload,
+                )
+            )
+
+        # 6. Upsert to Qdrant
+        print(f"Upserting {len(points)} points to Qdrant...")
+        try:
+            self.qdrant.get_client().upsert(
+                collection_name=self.qdrant.collection_name, points=points
+            )
+            print("✅ Upsert complete!")
+        except Exception as e:
+            print(f"❌ Qdrant upsert failed: {e}")
+            raise
 
         return UUID(hex=document_id)
 
@@ -83,14 +142,13 @@ class IngestionService:
         pdf_doc = fitz.open(stream=io.BytesIO(file_content), filetype="pdf")
         pages = []
 
-        # Iterate through pages using indexing instead of enumerate
         for page_num in range(len(pdf_doc)):
             page = pdf_doc[page_num]
             text = page.get_text()
-            if text and text.strip():  # type: ignore - PyMuPDF typing
+            if text and text.strip():
                 pages.append(
                     {
-                        "page": page_num + 1,  # 1-indexed page numbers
+                        "page": page_num + 1,
                         "text": text,
                     }
                 )
@@ -99,23 +157,18 @@ class IngestionService:
         return pages
 
     def _chunk_text(self, pages: list[dict]) -> list[dict]:
-        """
-        Chunk text with overlap, preserving page metadata.
-        Uses a simple character-based chunking strategy.
-        """
+        """Chunk text with overlap, preserving page metadata."""
         chunks = []
 
         for page in pages:
             text = page["text"]
             page_num = page["page"]
 
-            # Simple chunking with overlap
             start = 0
             while start < len(text):
                 end = start + self.chunk_size
                 chunk_text = text[start:end]
 
-                # Avoid cutting mid-word if possible
                 if end < len(text):
                     last_space = chunk_text.rfind(" ")
                     if last_space > self.chunk_size // 2:
@@ -139,8 +192,8 @@ class IngestionService:
         return chunks
 
     async def delete_document(self, document_id: UUID, user_id: UUID) -> bool:
-        """Delete a document and its chunks."""
-        # RLS will ensure only owner can delete
+        """Delete a document and its vectors."""
+        # Delete from Supabase
         result = (
             self.supabase.table("documents")
             .delete()
@@ -149,7 +202,24 @@ class IngestionService:
             .execute()
         )
 
-        return len(result.data) > 0
+        if result.data:
+            # Delete from Qdrant
+            self.qdrant.get_client().delete(
+                collection_name=self.qdrant.collection_name,
+                points_selector=models.FilterSelector(
+                    filter=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="document_id",
+                                match=models.MatchValue(value=str(document_id)),
+                            )
+                        ]
+                    )
+                ),
+            )
+            return True
+
+        return False
 
 
 # Singleton

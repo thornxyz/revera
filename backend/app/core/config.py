@@ -24,7 +24,12 @@ class Settings(BaseSettings):
     gemini_api_key: str
 
     # Web Search (Tavily)
+    # Web Search (Tavily)
     tavily_api_key: str | None = None
+
+    # Qdrant Settings
+    qdrant_url: str | None = None
+    qdrant_api_key: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=Path(__file__).parent.parent.parent / ".env",

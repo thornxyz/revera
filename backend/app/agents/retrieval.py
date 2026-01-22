@@ -39,7 +39,7 @@ class RetrievalAgent(BaseAgent):
                 "document_id": r.document_id,
                 "content": r.content,
                 "metadata": r.metadata,
-                "score": r.combined_score,
+                "score": r.score,
             }
             for r in results
         ]

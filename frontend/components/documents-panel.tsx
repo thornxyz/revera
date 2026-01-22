@@ -2,10 +2,11 @@
 
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
-import { listDocuments, uploadDocument, Document } from "@/lib/api";
+import { Trash2 } from "lucide-react";
+import { listDocuments, uploadDocument, deleteDocument, Document } from "@/lib/api";
 
 interface DocumentsPanelProps {
     onDocumentSelect?: (documentIds: string[]) => void;
@@ -16,6 +17,7 @@ export function DocumentsPanel({ onDocumentSelect }: DocumentsPanelProps) {
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [isLoading, setIsLoading] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
+    const [deletingId, setDeletingId] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
@@ -49,6 +51,27 @@ export function DocumentsPanel({ onDocumentSelect }: DocumentsPanelProps) {
         } finally {
             setIsUploading(false);
             e.target.value = "";
+        }
+    };
+
+    const handleDelete = async (e: React.MouseEvent, id: string) => {
+        e.stopPropagation(); // Don't trigger selection
+        if (!confirm("Are you sure you want to delete this document?")) return;
+
+        setDeletingId(id);
+        try {
+            await deleteDocument(id);
+            setDocuments((prev) => prev.filter((d) => d.id !== id));
+            if (selectedIds.has(id)) {
+                const newSelected = new Set(selectedIds);
+                newSelected.delete(id);
+                setSelectedIds(newSelected);
+                onDocumentSelect?.(Array.from(newSelected));
+            }
+        } catch (err) {
+            setError("Failed to delete document");
+        } finally {
+            setDeletingId(null);
         }
     };
 
@@ -99,26 +122,37 @@ export function DocumentsPanel({ onDocumentSelect }: DocumentsPanelProps) {
                         documents.map((doc) => (
                             <Card
                                 key={doc.id}
-                                className={`cursor-pointer transition-all ${selectedIds.has(doc.id)
-                                        ? "bg-violet-900/30 border-violet-700"
-                                        : "bg-neutral-900/50 border-neutral-800 hover:border-neutral-700"
+                                className={`group cursor-pointer transition-all ${selectedIds.has(doc.id)
+                                    ? "bg-violet-900/30 border-violet-700"
+                                    : "bg-neutral-900/50 border-neutral-800 hover:border-neutral-700"
                                     }`}
                                 onClick={() => toggleSelect(doc.id)}
                             >
                                 <CardContent className="p-3">
                                     <div className="flex items-center gap-2">
                                         <span className="text-lg">📄</span>
-                                        <div className="flex-1 min-w-0">
-                                            <p className="text-sm font-medium truncate">
+                                        <div className="flex-1 min-w-0 overflow-hidden">
+                                            <p className="text-sm font-medium truncate" title={doc.filename}>
                                                 {doc.filename}
                                             </p>
                                             <p className="text-xs text-neutral-500">
                                                 {new Date(doc.created_at).toLocaleDateString()}
                                             </p>
                                         </div>
-                                        {selectedIds.has(doc.id) && (
-                                            <span className="text-violet-400">✓</span>
-                                        )}
+                                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                className="h-8 w-8 text-neutral-500 hover:text-red-400 hover:bg-neutral-800"
+                                                onClick={(e) => handleDelete(e, doc.id)}
+                                                disabled={deletingId === doc.id}
+                                            >
+                                                <Trash2 className="h-4 w-4" />
+                                            </Button>
+                                            {selectedIds.has(doc.id) && (
+                                                <span className="text-violet-400 mr-1">✓</span>
+                                            )}
+                                        </div>
                                     </div>
                                 </CardContent>
                             </Card>

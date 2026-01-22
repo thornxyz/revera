@@ -45,6 +45,7 @@ export default function ResearchPage() {
     try {
       const response = await research(query, true);
       setResult(response);
+      setQuery(""); // Clear input after successful submission
     } catch (err) {
       setError(err instanceof Error ? err.message : "Research failed");
     } finally {

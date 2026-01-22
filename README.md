@@ -1,6 +1,6 @@
 # Revera - Multi-Agent Research Tool
 
-A research system combining Hybrid RAG (dense + sparse retrieval), live web search, and multi-agent orchestration.
+A research system combining **Triple Hybrid RAG** (Dense + Sparse + Late Interaction), live web search, and multi-agent orchestration.
 
 ## Architecture
 
@@ -27,8 +27,8 @@ flowchart TB
     end
 
     subgraph Services["Core Services"]
-        Ingestion["Document Ingestion<br/>(PDF → Chunks → Embeddings)"]
-        HybridSearch["Hybrid Search<br/>(Dense + Sparse + RRF)"]
+        Ingestion["Document Ingestion<br/>(PDF → Chunks → Triple Embeddings)"]
+        HybridSearch["Triple Hybrid Search<br/>(Dense + Sparse + ColBERT)"]
     end
 
     subgraph External["External Services"]
@@ -36,10 +36,9 @@ flowchart TB
         Tavily["Tavily API<br/>(Web Search)"]
     end
 
-    subgraph Data["Data Layer (Supabase)"]
-        PG[(PostgreSQL)]
-        Vector[(pgvector)]
-        Storage[(File Storage)]
+    subgraph Data["Data Layer"]
+        Supabase[(Supabase<br/>Auth + Metadata)]
+        Qdrant[(Qdrant<br/>Vector DB)]
     end
 
     UI --> Research
@@ -57,14 +56,13 @@ flowchart TB
     WebSearch --> Synthesis
     Synthesis --> Critic
     
-    HybridSearch --> Vector
-    HybridSearch --> PG
+    HybridSearch --> Qdrant
     Ingestion --> Gemini
-    Ingestion --> Vector
+    Ingestion --> Qdrant
     Synthesis --> Gemini
     Critic --> Gemini
     
-    Storage --> Ingestion
+    Supabase --> Ingestion
 ```
 
 ## Tech Stack
@@ -73,9 +71,23 @@ flowchart TB
 |-------|------------|
 | Frontend | Next.js 16, TypeScript, Tailwind CSS, shadcn/ui |
 | Backend | FastAPI, Python 3.12, uv |
-| Database | Supabase (Postgres + pgvector) |
+| Database | Supabase (Postgres for metadata/auth) |
+| Vector DB | **Qdrant** (Triple Hybrid: Dense + Sparse + ColBERT) |
 | AI | Google Gemini (gemini-embedding-001, gemini-3-flash-preview) |
+| Local Models | FastEmbed (ColBERT, BM25) |
 | Search | Tavily API |
+
+## Triple Hybrid Search
+
+Revera uses a state-of-the-art **Triple Hybrid** retrieval architecture:
+
+| Vector Type | Model | Purpose |
+|-------------|-------|---------|
+| **Dense** | Gemini (3072d) | Semantic understanding |
+| **Sparse** | BM25 | Keyword matching |
+| **Late Interaction** | ColBERT (128d) | Precise contextual alignment |
+
+All three vectors are stored in Qdrant and combined using prefetch + re-ranking for optimal retrieval.
 
 ## Project Structure
 
@@ -89,6 +101,7 @@ revera/
 │   └── app/
 │       ├── agents/        # Multi-agent system
 │       ├── api/           # REST endpoints
+│       ├── core/          # Qdrant + Supabase clients
 │       ├── services/      # Ingestion, Search
 │       └── llm/           # Gemini client
 └── supabase/
@@ -102,6 +115,7 @@ revera/
 - Node.js 20+ & pnpm
 - Python 3.12+ & uv
 - Supabase account
+- Qdrant Cloud account (or local Docker)
 - Google Gemini API key
 
 ### Setup
@@ -130,6 +144,8 @@ SUPABASE_ANON_KEY=your-anon-key
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 GEMINI_API_KEY=your-gemini-key
 TAVILY_API_KEY=your-tavily-key
+QDRANT_URL=https://your-cluster.qdrant.tech
+QDRANT_API_KEY=your-qdrant-key
 ```
 
 **Frontend** (`.env.local`):
@@ -159,8 +175,4 @@ Google OAuth is the only sign-in method. To enable:
 | GET | `/api/documents/` | List documents |
 | DELETE | `/api/documents/{id}` | Delete document |
 | POST | `/api/feedback/` | Submit feedback |
-
-## License
-
-MIT
 
