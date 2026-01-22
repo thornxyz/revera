@@ -21,7 +21,11 @@ class GeminiClient:
             model=self.embedding_model,
             contents=text,
         )
-        return result.embeddings[0].values
+        if result.embeddings and len(result.embeddings) > 0:
+            values = result.embeddings[0].values
+            if values is not None:
+                return values
+        return []
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for multiple texts."""
@@ -29,7 +33,9 @@ class GeminiClient:
             model=self.embedding_model,
             contents=texts,
         )
-        return [e.values for e in result.embeddings]
+        if result.embeddings is None:
+            return []
+        return [e.values for e in result.embeddings if e.values is not None]
 
     def generate(
         self,
@@ -52,7 +58,7 @@ class GeminiClient:
             contents=prompt,
             config=config,
         )
-        return response.text
+        return response.text or ""
 
     def generate_json(
         self,
@@ -74,7 +80,7 @@ class GeminiClient:
             contents=prompt,
             config=config,
         )
-        return response.text
+        return response.text or ""
 
 
 # Singleton instance

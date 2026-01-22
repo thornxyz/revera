@@ -42,7 +42,13 @@ class IngestionService:
             .execute()
         )
 
-        document_id = doc_result.data[0]["id"]
+        if not doc_result.data or len(doc_result.data) == 0:
+            raise ValueError("Failed to create document record")
+
+        # Type assertion for Supabase response (Supabase typing is complex)
+        document_id = str(doc_result.data[0].get("id", ""))  # type: ignore
+        if not document_id:
+            raise ValueError("Document ID not returned from database")
 
         # 2. Extract text from PDF
         text_pages = self._extract_pdf_text(file_content)
@@ -59,7 +65,7 @@ class IngestionService:
             {
                 "document_id": document_id,
                 "content": chunk["content"],
-                "embedding": embeddings[i],
+                "embedding": f"[{','.join(map(str, embeddings[i]))}]",  # Format as pgvector string
                 "metadata": chunk["metadata"],
             }
             for i, chunk in enumerate(chunks)
@@ -70,19 +76,21 @@ class IngestionService:
             batch = chunk_records[i : i + 50]
             self.supabase.table("document_chunks").insert(batch).execute()
 
-        return UUID(document_id)
+        return UUID(hex=document_id)
 
     def _extract_pdf_text(self, file_content: bytes) -> list[dict]:
         """Extract text from PDF with page numbers."""
         pdf_doc = fitz.open(stream=io.BytesIO(file_content), filetype="pdf")
         pages = []
 
-        for page_num, page in enumerate(pdf_doc, start=1):
+        # Iterate through pages using indexing instead of enumerate
+        for page_num in range(len(pdf_doc)):
+            page = pdf_doc[page_num]
             text = page.get_text()
-            if text.strip():
+            if text and text.strip():  # type: ignore - PyMuPDF typing
                 pages.append(
                     {
-                        "page": page_num,
+                        "page": page_num + 1,  # 1-indexed page numbers
                         "text": text,
                     }
                 )

@@ -3,7 +3,7 @@
 import time
 from dataclasses import dataclass
 
-from tavily import TavilyClient, AsyncTavilyClient
+from tavily import AsyncTavilyClient
 
 from app.agents.base import BaseAgent, AgentInput, AgentOutput
 from app.core.config import get_settings
@@ -20,14 +20,23 @@ class WebSource:
     raw_content: str | None = None
     date: str | None = None
     score: float = 0.0
+    relevance_score: float = 0.0  # Composite relevance score
 
 
-QUERY_REWRITE_PROMPT = """Rewrite this research query into an optimal web search query.
-Keep it concise (under 10 words) and focused on finding factual information.
+QUERY_EXPANSION_PROMPT = """Generate 1-3 optimized search queries to comprehensively answer this research question.
+For complex queries, create variations that explore different aspects.
+For simple queries, return just one optimized version.
 
 Original query: {query}
 
-Output only the rewritten search query, nothing else."""
+Output format (JSON):
+{{
+    "primary_query": "main optimized search query",
+    "alternative_queries": ["alternative angle 1", "alternative angle 2"],
+    "query_type": "factual|conceptual|comparative|temporal"
+}}
+
+Keep each query under 15 words and focused on retrievable facts."""
 
 
 class WebSearchAgent(BaseAgent):
@@ -54,7 +63,7 @@ class WebSearchAgent(BaseAgent):
             self.tavily = None
 
     async def run(self, input: AgentInput) -> AgentOutput:
-        """Execute web search and return relevant sources."""
+        """Execute web search with multi-query expansion and ranking."""
         start_time = time.perf_counter()
 
         # Check if web search is configured
@@ -62,29 +71,62 @@ class WebSearchAgent(BaseAgent):
             return AgentOutput(
                 agent_name=self.name,
                 result=[],
-                metadata={
-                    "error": "Web search not configured. Set WEB_SEARCH_API_KEY."
-                },
+                metadata={"error": "Web search not configured. Set TAVILY_API_KEY."},
                 latency_ms=0,
             )
 
-        # Rewrite query for better search results
-        rewritten_query = await self._rewrite_query(input.query)
+        # Expand query into multiple search variations
+        query_expansion = await self._expand_query(input.query)
 
-        # Execute Tavily search
-        sources, tavily_answer = await self._search_tavily(
-            rewritten_query, input.constraints
+        # Execute searches for all query variations
+        all_sources = []
+        search_metadata = []
+
+        # Primary query
+        primary_sources, tavily_answer = await self._search_tavily(
+            query_expansion["primary_query"], input.constraints
+        )
+        all_sources.extend(primary_sources)
+        search_metadata.append(
+            {
+                "query": query_expansion["primary_query"],
+                "type": "primary",
+                "results": len(primary_sources),
+            }
         )
 
-        # Deduplicate by URL
-        seen_urls = set()
-        unique_sources = []
-        for source in sources:
-            if source.url not in seen_urls:
-                seen_urls.add(source.url)
-                unique_sources.append(source)
+        # Alternative queries (if any)
+        max_alternatives = input.constraints.get("max_alternative_queries", 2)
+        for alt_query in query_expansion.get("alternative_queries", [])[
+            :max_alternatives
+        ]:
+            if alt_query and alt_query != query_expansion["primary_query"]:
+                alt_sources, _ = await self._search_tavily(
+                    alt_query,
+                    {
+                        **input.constraints,
+                        "max_web_results": 3,
+                    },  # Fewer for alternatives
+                )
+                all_sources.extend(alt_sources)
+                search_metadata.append(
+                    {
+                        "query": alt_query,
+                        "type": "alternative",
+                        "results": len(alt_sources),
+                    }
+                )
 
-        # Format results
+        # Deduplicate and rank by relevance
+        unique_sources = self._deduplicate_and_rank(
+            all_sources, input.query, query_expansion["query_type"]
+        )
+
+        # Limit to top results
+        max_results = input.constraints.get("max_web_results", 5)
+        top_sources = unique_sources[:max_results]
+
+        # Format results with quality scores
         formatted_results = [
             {
                 "url": s.url,
@@ -93,8 +135,9 @@ class WebSearchAgent(BaseAgent):
                 "raw_content": s.raw_content,
                 "date": s.date,
                 "score": s.score,
+                "relevance_score": s.relevance_score,
             }
-            for s in unique_sources
+            for s in top_sources
         ]
 
         latency = int((time.perf_counter() - start_time) * 1000)
@@ -104,22 +147,75 @@ class WebSearchAgent(BaseAgent):
             result=formatted_results,
             metadata={
                 "original_query": input.query,
-                "rewritten_query": rewritten_query,
+                "query_expansion": query_expansion,
+                "searches_performed": search_metadata,
                 "total_results": len(formatted_results),
-                "tavily_answer": tavily_answer,  # Optional quick answer from Tavily
+                "deduplicated_from": len(all_sources),
+                "tavily_answer": tavily_answer,
             },
             latency_ms=latency,
         )
 
-    async def _rewrite_query(self, query: str) -> str:
-        """Rewrite query for optimal web search."""
-        prompt = QUERY_REWRITE_PROMPT.format(query=query)
-        rewritten = self.gemini.generate(
-            prompt=prompt,
-            temperature=0.3,
-            max_tokens=50,
-        )
-        return rewritten.strip()
+    async def _expand_query(self, query: str) -> dict:
+        """Expand query into multiple search variations."""
+        prompt = QUERY_EXPANSION_PROMPT.format(query=query)
+        try:
+            response = self.gemini.generate_json(
+                prompt=prompt,
+                temperature=0.4,
+            )
+            expansion = self._parse_json_response(response)
+            # Ensure we have valid structure
+            if "primary_query" not in expansion:
+                expansion["primary_query"] = query
+            if "alternative_queries" not in expansion:
+                expansion["alternative_queries"] = []
+            if "query_type" not in expansion:
+                expansion["query_type"] = "factual"
+            return expansion
+        except Exception as e:
+            # Fallback to original query
+            return {
+                "primary_query": query,
+                "alternative_queries": [],
+                "query_type": "factual",
+            }
+
+    def _deduplicate_and_rank(
+        self, sources: list[WebSource], original_query: str, query_type: str
+    ) -> list[WebSource]:
+        """Deduplicate by URL and rank by relevance + freshness."""
+        seen_urls = {}
+
+        for source in sources:
+            if source.url not in seen_urls:
+                # Calculate composite relevance score
+                relevance = source.score
+
+                # Boost recent content for temporal queries
+                if query_type == "temporal" and source.date:
+                    # Simple recency boost (last 30 days get +0.1)
+                    from datetime import datetime, timedelta
+
+                    try:
+                        pub_date = datetime.fromisoformat(
+                            source.date.replace("Z", "+00:00")
+                        )
+                        days_old = (datetime.now(pub_date.tzinfo) - pub_date).days
+                        if days_old <= 30:
+                            relevance += 0.1
+                    except:
+                        pass
+
+                # Boost longer, more detailed content
+                content_length_score = min(len(source.content) / 2000, 0.1)
+                relevance += content_length_score
+
+                source.relevance_score = relevance
+                seen_urls[source.url] = source
+
+        # Sort by relevance score
+        return sorted(seen_urls.values(), key=lambda s: s.relevance_score, reverse=True)
 
     async def _search_tavily(
         self,
@@ -132,6 +228,9 @@ class WebSearchAgent(BaseAgent):
         Returns:
             Tuple of (sources list, optional Tavily-generated answer)
         """
+        if not self.tavily:
+            return [], None
+
         try:
             # Determine search parameters based on constraints
             max_results = constraints.get("max_web_results", 5)

@@ -40,6 +40,10 @@ async def upload_document(
     3. Embedded using Gemini
     4. Stored in the vector database
     """
+    # Validate filename exists
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="File must have a filename")
+
     # Validate file type
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
@@ -72,8 +76,8 @@ async def upload_document(
 
         return DocumentResponse(
             id=str(document_id),
-            filename=doc.data["filename"],
-            created_at=doc.data["created_at"],
+            filename=doc.data["filename"],  # type: ignore
+            created_at=doc.data["created_at"],  # type: ignore
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -98,13 +102,13 @@ async def list_documents(
     return DocumentListResponse(
         documents=[
             DocumentResponse(
-                id=doc["id"],
-                filename=doc["filename"],
-                created_at=doc["created_at"],
+                id=str(doc.get("id", "")),  # type: ignore
+                filename=str(doc.get("filename", "")),  # type: ignore
+                created_at=str(doc.get("created_at", "")),  # type: ignore
             )
-            for doc in result.data
+            for doc in (result.data or [])  # type: ignore
         ],
-        total=len(result.data),
+        total=len(result.data or []),  # type: ignore
     )
 
 

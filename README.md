@@ -109,13 +109,13 @@ revera/
 ```bash
 # Backend
 cd backend
-cp .env.example .env  # Add your API keys
+cp example.env .env  # Add your API keys
 uv sync
 uv run main.py
 
 # Frontend
 cd frontend
-cp .env.example .env.local
+cp example.env .env.local
 pnpm install
 pnpm dev
 ```
@@ -144,7 +144,10 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 Google OAuth is the only sign-in method. To enable:
 1. Go to Supabase Dashboard → Authentication → Providers → Google
 2. Add your Google OAuth credentials
-3. Set redirect URL: `https://your-project.supabase.co/auth/v1/callback`
+3. Add authorized redirect URLs:
+   - Development: `http://localhost:3000/auth/callback`
+   - Production: `https://your-domain.com/auth/callback`
+4. Ensure the Supabase redirect URL is set to: `https://your-project.supabase.co/auth/v1/callback`
 
 ## API Endpoints
 

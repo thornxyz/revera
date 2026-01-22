@@ -64,7 +64,10 @@ async def submit_feedback(
         .execute()
     )
 
+    if not result.data or len(result.data) == 0:  # type: ignore
+        raise HTTPException(status_code=500, detail="Failed to store feedback")
+
     return FeedbackResponse(
-        id=result.data[0]["id"],
+        id=str(result.data[0].get("id", "")),  # type: ignore
         status="submitted",
     )

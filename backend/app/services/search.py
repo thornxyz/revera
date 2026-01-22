@@ -96,15 +96,16 @@ class HybridSearchService:
         result = self.supabase.rpc("match_document_chunks", params).execute()
 
         results = []
-        for i, row in enumerate(result.data):
+        data = result.data if isinstance(result.data, list) else []  # type: ignore
+        for i, row in enumerate(data):  # type: ignore
+            row_dict = dict(row) if not isinstance(row, dict) else row  # type: ignore
             results.append(
                 SearchResult(
-                    chunk_id=row["id"],
-                    document_id=row["document_id"],
-                    content=row["content"],
-                    metadata=row.get("metadata", {}),
-                    dense_score=1
-                    - row.get("distance", 0),  # Convert distance to similarity
+                    chunk_id=str(row_dict.get("id", "")),  # type: ignore
+                    document_id=str(row_dict.get("document_id", "")),  # type: ignore
+                    content=str(row_dict.get("content", "")),  # type: ignore
+                    metadata=row_dict.get("metadata", {}),  # type: ignore
+                    dense_score=float(1 - float(row_dict.get("distance", 0))),  # type: ignore
                 )
             )
 
@@ -135,14 +136,16 @@ class HybridSearchService:
         result = self.supabase.rpc("search_document_chunks_fts", params).execute()
 
         results = []
-        for row in result.data:
+        data = result.data if isinstance(result.data, list) else []  # type: ignore
+        for row in data:  # type: ignore
+            row_dict = dict(row) if not isinstance(row, dict) else row  # type: ignore
             results.append(
                 SearchResult(
-                    chunk_id=row["id"],
-                    document_id=row["document_id"],
-                    content=row["content"],
-                    metadata=row.get("metadata", {}),
-                    sparse_score=row.get("rank", 0),
+                    chunk_id=str(row_dict.get("id", "")),  # type: ignore
+                    document_id=str(row_dict.get("document_id", "")),  # type: ignore
+                    content=str(row_dict.get("content", "")),  # type: ignore
+                    metadata=row_dict.get("metadata", {}),  # type: ignore
+                    sparse_score=float(row_dict.get("rank", 0)),  # type: ignore
                 )
             )
 
