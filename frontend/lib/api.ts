@@ -1,3 +1,5 @@
+import { createClient } from "@/lib/supabase/client";
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export interface ResearchResponse {
@@ -33,6 +35,7 @@ export interface Verification {
         reason: string;
     }>;
     overall_assessment: string;
+    criticism?: string;
 }
 
 export interface AgentTimeline {
@@ -52,8 +55,10 @@ export interface Document {
 }
 
 async function getAuthHeaders(): Promise<HeadersInit> {
-    const { getAccessToken } = await import("@/lib/supabase");
-    const token = await getAccessToken();
+    const supabase = createClient();
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+
     return {
         "Content-Type": "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -98,15 +103,15 @@ export async function getTimeline(sessionId: string): Promise<AgentTimeline> {
 }
 
 export async function uploadDocument(file: File): Promise<Document> {
-    const { getAccessToken } = await import("@/lib/supabase");
-    const token = await getAccessToken();
+    const headers = (await getAuthHeaders()) as Record<string, string>;
+    delete headers["Content-Type"]; // Let browser set boundary for FormData
 
     const formData = new FormData();
     formData.append("file", file);
 
     const response = await fetch(`${API_BASE_URL}/api/documents/upload`, {
         method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers,
         body: formData,
     });
 

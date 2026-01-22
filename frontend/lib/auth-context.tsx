@@ -8,7 +8,7 @@ import {
     ReactNode,
 } from "react";
 import { User, Session } from "@supabase/supabase-js";
-import { supabase, signInWithGoogle, signOut } from "@/lib/supabase";
+import { createClient } from "@/lib/supabase/client";
 
 interface AuthContextType {
     user: User | null;
@@ -24,6 +24,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [user, setUser] = useState<User | null>(null);
     const [session, setSession] = useState<Session | null>(null);
     const [loading, setLoading] = useState(true);
+    const supabase = createClient();
 
     useEffect(() => {
         // Get initial session
@@ -43,14 +44,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
 
         return () => subscription.unsubscribe();
-    }, []);
+    }, [supabase]);
 
     const handleSignIn = async () => {
-        await signInWithGoogle();
+        await supabase.auth.signInWithOAuth({
+            provider: "google",
+            options: {
+                redirectTo: `${window.location.origin}/auth/callback`,
+            },
+        });
     };
 
     const handleSignOut = async () => {
-        await signOut();
+        await supabase.auth.signOut();
         setUser(null);
         setSession(null);
     };
