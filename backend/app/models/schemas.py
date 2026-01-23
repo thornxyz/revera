@@ -88,22 +88,3 @@ class AgentLog(AgentLogBase):
 
     class Config:
         from_attributes = True
-
-
-class FeedbackCreate(BaseModel):
-    """Model for creating feedback."""
-
-    session_id: UUID
-    rating: int = Field(ge=1, le=5)
-    comment: str | None = None
-
-
-class Feedback(FeedbackCreate):
-    """Full feedback model."""
-
-    id: UUID
-    user_id: UUID
-    created_at: datetime
-
-    class Config:
-        from_attributes = True

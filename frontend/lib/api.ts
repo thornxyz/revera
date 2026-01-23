@@ -149,27 +149,6 @@ export async function deleteDocument(documentId: string): Promise<void> {
 }
 
 
-export async function submitFeedback(
-    sessionId: string,
-    rating: number,
-    comment?: string
-): Promise<void> {
-    const headers = await getAuthHeaders();
-    const response = await fetch(`${API_BASE_URL}/api/feedback/`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-            session_id: sessionId,
-            rating,
-            comment,
-        }),
-    });
-
-    if (!response.ok) {
-        throw new Error(`Failed to submit feedback: ${response.statusText}`);
-    }
-}
-
 export interface Session {
     id: string;
     query: string;

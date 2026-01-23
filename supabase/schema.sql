@@ -31,16 +31,6 @@ CREATE TABLE agent_logs (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- User feedback
-CREATE TABLE feedback (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    session_id UUID NOT NULL REFERENCES research_sessions(id) ON DELETE CASCADE,
-    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-    rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
-    comment TEXT,
-    created_at TIMESTAMPTZ DEFAULT now()
-);
-
 -- Indexes for performance
 CREATE INDEX idx_documents_user_id ON documents(user_id);
 CREATE INDEX idx_research_sessions_user_id ON research_sessions(user_id);
@@ -50,7 +40,6 @@ CREATE INDEX idx_agent_logs_session_id ON agent_logs(session_id);
 ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE research_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_logs ENABLE ROW LEVEL SECURITY;
-ALTER TABLE feedback ENABLE ROW LEVEL SECURITY;
 
 -- Documents: users can only access their own
 CREATE POLICY "Users can view own documents" ON documents
@@ -73,9 +62,3 @@ CREATE POLICY "Users can view logs of own sessions" ON agent_logs
     FOR SELECT USING (
         EXISTS (SELECT 1 FROM research_sessions WHERE research_sessions.id = agent_logs.session_id AND research_sessions.user_id = auth.uid())
     );
-
--- Feedback: users can only access their own
-CREATE POLICY "Users can view own feedback" ON feedback
-    FOR SELECT USING (auth.uid() = user_id);
-CREATE POLICY "Users can insert own feedback" ON feedback
-    FOR INSERT WITH CHECK (auth.uid() = user_id);

@@ -16,6 +16,7 @@ router = APIRouter()
 
 class SessionSummary(BaseModel):
     """Summary of a research session."""
+
     id: str
     query: str
     status: str
@@ -24,6 +25,7 @@ class SessionSummary(BaseModel):
 
 class SessionDetail(BaseModel):
     """Detailed view of a research session."""
+
     id: str
     query: str
     status: str
@@ -37,7 +39,7 @@ async def list_sessions(
 ):
     """List all research sessions for the current user."""
     supabase = get_supabase_client()
-    
+
     response = (
         supabase.table("research_sessions")
         .select("id, query, status, created_at")
@@ -45,7 +47,7 @@ async def list_sessions(
         .order("created_at", desc=True)
         .execute()
     )
-    
+
     return [SessionSummary(**session) for session in response.data]
 
 
@@ -56,7 +58,7 @@ async def get_session(
 ):
     """Get full details of a specific session."""
     supabase = get_supabase_client()
-    
+
     response = (
         supabase.table("research_sessions")
         .select("*")
@@ -65,10 +67,10 @@ async def get_session(
         .single()
         .execute()
     )
-    
+
     if not response.data:
         raise HTTPException(status_code=404, detail="Session not found")
-        
+
     return SessionDetail(**response.data)
 
 
@@ -79,7 +81,7 @@ async def delete_session(
 ):
     """Delete a research session."""
     supabase = get_supabase_client()
-    
+
     # First check if exists and belongs to user
     check = (
         supabase.table("research_sessions")
@@ -88,11 +90,11 @@ async def delete_session(
         .eq("user_id", user_id)
         .execute()
     )
-    
+
     if not check.data:
         raise HTTPException(status_code=404, detail="Session not found")
-        
-    # Delete (cascade will handle logs and feedback)
+
+    # Delete (cascade will handle logs)
     supabase.table("research_sessions").delete().eq("id", session_id).execute()
-    
+
     return {"message": "Session deleted"}
