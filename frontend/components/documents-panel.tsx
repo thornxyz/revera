@@ -18,9 +18,10 @@ import { listDocuments, uploadDocument, deleteDocument, Document } from "@/lib/a
 
 interface DocumentsPanelProps {
     onDocumentSelect?: (documentIds: string[]) => void;
+    refreshToken?: number;
 }
 
-export function DocumentsPanel({ onDocumentSelect }: DocumentsPanelProps) {
+export function DocumentsPanel({ onDocumentSelect, refreshToken }: DocumentsPanelProps) {
     const [documents, setDocuments] = useState<Document[]>([]);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [isLoading, setIsLoading] = useState(false);
@@ -32,7 +33,7 @@ export function DocumentsPanel({ onDocumentSelect }: DocumentsPanelProps) {
 
     useEffect(() => {
         fetchDocuments();
-    }, []);
+    }, [refreshToken]);
 
     const fetchDocuments = async () => {
         setIsLoading(true);

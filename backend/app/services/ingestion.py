@@ -1,13 +1,15 @@
 """Document ingestion service - PDF parsing, chunking, and embedding."""
 
 import io
-from uuid import UUID
 import uuid
+from typing import Any, cast
+from uuid import UUID
 
 import fitz  # PyMuPDF
 from fastembed import TextEmbedding, SparseTextEmbedding, LateInteractionTextEmbedding
 from qdrant_client import models
 
+from app.core.config import get_settings
 from app.core.database import get_supabase_client
 from app.core.qdrant import get_qdrant_service
 from app.llm.gemini import get_gemini_client
@@ -17,6 +19,7 @@ class IngestionService:
     """Service for ingesting documents into the RAG system."""
 
     def __init__(self):
+        self.settings = get_settings()
         self.supabase = get_supabase_client()
         self.gemini = get_gemini_client()
         self.qdrant = get_qdrant_service()
@@ -55,10 +58,11 @@ class IngestionService:
             .execute()
         )
 
-        if not doc_result.data or len(doc_result.data) == 0:
+        doc_data = cast(list[dict[str, Any]], doc_result.data or [])
+        if not doc_data:
             raise ValueError("Failed to create document record")
 
-        document_id = str(doc_result.data[0].get("id", ""))
+        document_id = str(doc_data[0]["id"]) if "id" in doc_data[0] else ""
         if not document_id:
             raise ValueError("Document ID not returned from database")
 
@@ -109,27 +113,44 @@ class IngestionService:
                 "filename": filename,
             }
 
+            vector = cast(
+                Any,
+                {
+                    "dense": dense_embeddings[i],
+                    "colbert": colbert_vectors,
+                    "sparse": models.SparseVector(
+                        indices=sparse_vec.indices.tolist(),
+                        values=sparse_vec.values.tolist(),
+                    ),
+                },
+            )
+
             points.append(
                 models.PointStruct(
                     id=str(uuid.uuid4()),
-                    vector={
-                        "dense": dense_embeddings[i],
-                        "colbert": colbert_vectors,
-                        "sparse": models.SparseVector(
-                            indices=sparse_vec.indices.tolist(),
-                            values=sparse_vec.values.tolist(),
-                        ),
-                    },
+                    vector=vector,
                     payload=payload,
                 )
             )
 
         # 6. Upsert to Qdrant
-        print(f"Upserting {len(points)} points to Qdrant...")
+        batch_size = self.settings.qdrant_upsert_batch_size
+        if batch_size <= 0:
+            batch_size = len(points)
+
+        total_batches = max(1, (len(points) + batch_size - 1) // batch_size)
+        print(f"Upserting {len(points)} points to Qdrant in {total_batches} batches...")
         try:
-            self.qdrant.get_client().upsert(
-                collection_name=self.qdrant.collection_name, points=points
-            )
+            for batch_index in range(0, len(points), batch_size):
+                batch_number = batch_index // batch_size + 1
+                batch_points = points[batch_index : batch_index + batch_size]
+                print(
+                    f"Upserting batch {batch_number}/{total_batches} ({len(batch_points)} points)..."
+                )
+                self.qdrant.get_client().upsert(
+                    collection_name=self.qdrant.collection_name,
+                    points=batch_points,
+                )
             print("✅ Upsert complete!")
         except Exception as e:
             print(f"❌ Qdrant upsert failed: {e}")
@@ -144,8 +165,8 @@ class IngestionService:
 
         for page_num in range(len(pdf_doc)):
             page = pdf_doc[page_num]
-            text = page.get_text()
-            if text and text.strip():
+            text: str = str(page.get_text() or "")
+            if text.strip():
                 pages.append(
                     {
                         "page": page_num + 1,
@@ -161,13 +182,13 @@ class IngestionService:
         chunks = []
 
         for page in pages:
-            text = page["text"]
-            page_num = page["page"]
+            text = str(page["text"])
+            page_num = int(page["page"])
 
             start = 0
             while start < len(text):
                 end = start + self.chunk_size
-                chunk_text = text[start:end]
+                chunk_text: str = text[start:end]
 
                 if end < len(text):
                     last_space = chunk_text.rfind(" ")

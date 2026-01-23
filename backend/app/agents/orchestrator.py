@@ -168,11 +168,7 @@ class Orchestrator:
             total_latency = int((time.perf_counter() - start_time) * 1000)
 
             # Combine all sources
-            all_sources = []
-            for s in internal_sources:
-                all_sources.append({**s, "type": "internal"})
-            for s in web_sources:
-                all_sources.append({**s, "type": "web"})
+            all_sources = self._normalize_sources(internal_sources, web_sources)
 
             result = ResearchResult(
                 session_id=session_id,
@@ -192,7 +188,12 @@ class Orchestrator:
                     "status": "completed",
                     "result": {
                         "answer": result.answer,
+                        "sources": all_sources,
+                        "verification": verification,
                         "confidence": result.confidence,
+                        "total_latency_ms": result.total_latency_ms,
+                        "query": query,
+                        "session_id": session_id,
                     },
                 }
             ).eq("id", session_id).execute()
@@ -230,3 +231,32 @@ class Orchestrator:
             ).execute()
         except Exception as e:
             logger.warning(f"[ORCH] Failed to log agent {output.agent_name}: {e}")
+
+    @staticmethod
+    def _normalize_sources(
+        internal_sources: list[dict], web_sources: list[dict]
+    ) -> list[dict]:
+        """Normalize sources for storage and API responses."""
+        normalized_internal = [
+            {
+                "type": "internal",
+                "chunk_id": source.get("chunk_id"),
+                "document_id": source.get("document_id"),
+                "content": source.get("content", ""),
+                "score": source.get("score", 0),
+            }
+            for source in internal_sources
+        ]
+
+        normalized_web = [
+            {
+                "type": "web",
+                "url": source.get("url"),
+                "title": source.get("title"),
+                "content": source.get("content", ""),
+                "score": source.get("relevance_score", source.get("score", 0)),
+            }
+            for source in web_sources
+        ]
+
+        return normalized_internal + normalized_web

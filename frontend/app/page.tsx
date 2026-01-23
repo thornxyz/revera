@@ -31,6 +31,7 @@ export default function ResearchPage() {
   );
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
+  const [documentsRefreshToken, setDocumentsRefreshToken] = useState(0);
 
   // Show loading state
   if (loading) {
@@ -75,7 +76,8 @@ export default function ResearchPage() {
       const session = await getSession(sessionId);
       if (session.result) {
         const resolvedQuery = session.result.query?.trim() || session.query;
-        setResult({ ...session.result, query: resolvedQuery });
+        const normalizedSources = session.result.sources ?? [];
+        setResult({ ...session.result, query: resolvedQuery, sources: normalizedSources });
       }
       setCurrentSessionId(sessionId);
       // Don't set query, as we want to start fresh or just view result
@@ -156,7 +158,10 @@ export default function ResearchPage() {
                     </Button>
                   </div>
                   <div className="flex-1 overflow-hidden p-4">
-                    <DocumentsPanel onDocumentSelect={setSelectedDocumentIds} />
+                    <DocumentsPanel
+                      onDocumentSelect={setSelectedDocumentIds}
+                      refreshToken={documentsRefreshToken}
+                    />
                   </div>
                 </div>
               ) : (
@@ -373,7 +378,7 @@ export default function ResearchPage() {
           open={uploadDialogOpen}
           onOpenChange={setUploadDialogOpen}
           onUploadSuccess={() => {
-            // Refresh documents if needed
+            setDocumentsRefreshToken((prev) => prev + 1);
           }}
         />
       </ResizableLayout>

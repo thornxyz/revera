@@ -1,6 +1,8 @@
 from pathlib import Path
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
+from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 # Gemini Models (hardcoded, not from env)
@@ -30,6 +32,7 @@ class Settings(BaseSettings):
     # Qdrant Settings
     qdrant_url: str | None = None
     qdrant_api_key: str | None = None
+    qdrant_upsert_batch_size: int = 50
 
     model_config = SettingsConfigDict(
         env_file=Path(__file__).parent.parent.parent / ".env",

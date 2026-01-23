@@ -3,7 +3,7 @@
 import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from typing import List, Optional, Any
+from typing import Any, List, Optional, cast
 from datetime import datetime
 
 from app.core.auth import get_current_user_id
@@ -48,7 +48,16 @@ async def list_sessions(
         .execute()
     )
 
-    return [SessionSummary(**session) for session in response.data]
+    sessions = cast(list[dict[str, Any]], response.data or [])
+    return [
+        SessionSummary(
+            id=session["id"],
+            query=session["query"],
+            status=session["status"],
+            created_at=session["created_at"],
+        )
+        for session in sessions
+    ]
 
 
 @router.get("/{session_id}", response_model=SessionDetail)
@@ -71,7 +80,14 @@ async def get_session(
     if not response.data:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    return SessionDetail(**response.data)
+    session_data = cast(dict[str, Any], response.data)
+    return SessionDetail(
+        id=session_data["id"],
+        query=session_data["query"],
+        status=session_data["status"],
+        created_at=session_data["created_at"],
+        result=session_data.get("result"),
+    )
 
 
 @router.delete("/{session_id}")
