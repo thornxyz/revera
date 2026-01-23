@@ -65,6 +65,8 @@ CREATE POLICY "Users can view own sessions" ON research_sessions
     FOR SELECT USING (auth.uid() = user_id);
 CREATE POLICY "Users can insert own sessions" ON research_sessions
     FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can delete own sessions" ON research_sessions
+    FOR DELETE USING (auth.uid() = user_id);
 
 -- Agent logs: access through session ownership
 CREATE POLICY "Users can view logs of own sessions" ON agent_logs

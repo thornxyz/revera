@@ -169,3 +169,50 @@ export async function submitFeedback(
         throw new Error(`Failed to submit feedback: ${response.statusText}`);
     }
 }
+
+export interface Session {
+    id: string;
+    query: string;
+    status: "pending" | "running" | "completed" | "failed";
+    created_at: string;
+}
+
+export async function listSessions(): Promise<Session[]> {
+    const headers = await getAuthHeaders();
+    const response = await fetch(`${API_BASE_URL}/api/research/history/`, { headers });
+
+    if (!response.ok) {
+        throw new Error(`Failed to list sessions: ${response.statusText}`);
+    }
+
+    return response.json();
+}
+
+export interface SessionDetail extends Session {
+    result: ResearchResponse | null;
+}
+
+export async function getSession(sessionId: string): Promise<SessionDetail> {
+    const headers = await getAuthHeaders();
+    const response = await fetch(`${API_BASE_URL}/api/research/history/${sessionId}`, {
+        headers,
+    });
+
+    if (!response.ok) {
+        throw new Error(`Failed to get session: ${response.statusText}`);
+    }
+
+    return response.json();
+}
+
+export async function deleteSession(sessionId: string): Promise<void> {
+    const headers = await getAuthHeaders();
+    const response = await fetch(`${API_BASE_URL}/api/research/history/${sessionId}`, {
+        method: "DELETE",
+        headers,
+    });
+
+    if (!response.ok) {
+        throw new Error(`Failed to delete session: ${response.statusText}`);
+    }
+}

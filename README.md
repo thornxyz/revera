@@ -89,25 +89,6 @@ Revera uses a state-of-the-art **Triple Hybrid** retrieval architecture:
 
 All three vectors are stored in Qdrant and combined using prefetch + re-ranking for optimal retrieval.
 
-## Project Structure
-
-```
-revera/
-├── frontend/              # Next.js application
-│   ├── app/               # App router pages
-│   ├── components/        # UI components
-│   └── lib/               # API client
-├── backend/               # FastAPI application
-│   └── app/
-│       ├── agents/        # Multi-agent system
-│       ├── api/           # REST endpoints
-│       ├── core/          # Qdrant + Supabase clients
-│       ├── services/      # Ingestion, Search
-│       └── llm/           # Gemini client
-└── supabase/
-    └── migrations/        # Database schema
-```
-
 ## Getting Started
 
 ### Prerequisites
@@ -171,8 +152,10 @@ Google OAuth is the only sign-in method. To enable:
 |--------|----------|-------------|
 | POST | `/api/research/query` | Execute research query |
 | GET | `/api/research/{id}/timeline` | Get agent execution timeline |
+| GET | `/api/research/history/` | List all research sessions |
+| GET | `/api/research/history/{id}` | Get session details |
+| DELETE | `/api/research/history/{id}` | Delete a session |
 | POST | `/api/documents/upload` | Upload PDF document |
 | GET | `/api/documents/` | List documents |
 | DELETE | `/api/documents/{id}` | Delete document |
 | POST | `/api/feedback/` | Submit feedback |
-

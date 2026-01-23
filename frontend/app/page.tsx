@@ -7,11 +7,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { research, ResearchResponse, Source } from "@/lib/api";
-import { useAuth } from "@/lib/auth-context";
-import { LoginPage } from "@/components/login-page";
 import { DocumentsPanel } from "@/components/documents-panel";
 import { UploadDialog } from "@/components/upload-dialog";
+import { SessionsSidebar } from "@/components/sessions-sidebar";
+import { research, getSession, ResearchResponse, Source } from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
+import { ResizableLayout } from "@/components/resizable-layout";
+import { LoginPage } from "@/components/login-page";
 
 export default function ResearchPage() {
   const { user, loading, signOut } = useAuth();
@@ -21,6 +23,10 @@ export default function ResearchPage() {
   const [error, setError] = useState<string | null>(null);
   const [showSources, setShowSources] = useState(false);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+
+  // Multiple Chats State
+  const [activeTab, setActiveTab] = useState<"chat" | "documents">("chat");
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
 
   // Show loading state
   if (loading) {
@@ -45,12 +51,37 @@ export default function ResearchPage() {
     try {
       const response = await research(query, true);
       setResult(response);
-      setQuery(""); // Clear input after successful submission
+      setCurrentSessionId(response.session_id); // Track current session
+      setQuery("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Research failed");
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleSessionSelect = async (sessionId: string) => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const session = await getSession(sessionId);
+      if (session.result) {
+        setResult(session.result);
+      }
+      setCurrentSessionId(sessionId);
+      // Don't set query, as we want to start fresh or just view result
+    } catch (err) {
+      setError("Failed to load session");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleNewChat = () => {
+    setResult(null);
+    setQuery("");
+    setCurrentSessionId(null);
+    setError(null);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -62,220 +93,258 @@ export default function ResearchPage() {
 
   return (
     <div className="flex h-screen bg-gradient-to-br from-neutral-950 via-neutral-900 to-neutral-950 text-neutral-50">
-      {/* Sidebar with Documents */}
-      <div className="w-80 border-r border-neutral-800/50 flex flex-col backdrop-blur-sm">
-        <div className="p-4 border-b border-neutral-800/50">
-          <Button
-            onClick={() => setUploadDialogOpen(true)}
-            className="w-full bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 shadow-lg shadow-violet-500/20"
-          >
-            <Upload className="h-4 w-4 mr-2" />
-            Upload Document
-          </Button>
-        </div>
-        <div className="flex-1 overflow-hidden p-4">
-          <DocumentsPanel />
-        </div>
-      </div>
-
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col">
-        {/* Header */}
-        <header className="border-b border-neutral-800/50 px-6 py-4 flex items-center justify-between backdrop-blur-sm bg-neutral-900/30">
-          <div>
-            <h1 className="text-3xl font-bold bg-gradient-to-r from-violet-400 via-purple-400 to-cyan-400 bg-clip-text text-transparent flex items-center gap-2">
-              <Sparkles className="h-6 w-6 text-violet-400" />
-              Revera
-            </h1>
-            <p className="text-sm text-neutral-400 mt-0.5">
-              AI-Powered Research Assistant
-            </p>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="text-right">
-              <p className="text-xs text-neutral-500">Signed in as</p>
-              <p className="text-sm text-neutral-300">{user.email}</p>
+      <ResizableLayout
+        sidebar={
+          <div className="h-full flex flex-col overflow-hidden">
+            {/* Sidebar Tabs */}
+            <div className="flex border-b border-neutral-800/50">
+              <button
+                onClick={() => setActiveTab("chat")}
+                className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === "chat"
+                  ? "text-violet-400 border-b-2 border-violet-500 bg-violet-900/10"
+                  : "text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/30"
+                  }`}
+              >
+                Chats
+              </button>
+              <button
+                onClick={() => setActiveTab("documents")}
+                className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === "documents"
+                  ? "text-violet-400 border-b-2 border-violet-500 bg-violet-900/10"
+                  : "text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/30"
+                  }`}
+              >
+                Documents
+              </button>
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={signOut}
-              className="text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800"
-            >
-              Sign Out
-            </Button>
-          </div>
-        </header>
 
-        {/* Research Results */}
-        <ScrollArea className="flex-1 p-6">
-          {error && (
-            <Card className="mb-4 border-red-900/50 bg-red-950/30 backdrop-blur-sm">
-              <CardContent className="pt-4">
-                <p className="text-red-400">{error}</p>
-              </CardContent>
-            </Card>
-          )}
-
-          {result && (
-            <div className="space-y-6 max-w-5xl mx-auto">
-              {/* Query */}
-              <div className="flex items-start gap-3 text-neutral-400 text-sm bg-neutral-900/50 backdrop-blur-sm rounded-lg p-4 border border-neutral-800/50">
-                <Sparkles className="h-4 w-4 text-violet-400 mt-0.5 flex-shrink-0" />
-                <div>
-                  <span className="text-neutral-500 text-xs">Query:</span>
-                  <p className="text-neutral-200 mt-1">{result.query}</p>
+            {/* Sidebar Content */}
+            <div className="flex-1 overflow-hidden relative">
+              {activeTab === "chat" ? (
+                <SessionsSidebar
+                  currentSessionId={currentSessionId}
+                  onSessionSelect={handleSessionSelect}
+                  onNewChat={handleNewChat}
+                />
+              ) : (
+                <div className="h-full flex flex-col">
+                  <div className="p-4 border-b border-neutral-800/50">
+                    <Button
+                      onClick={() => setUploadDialogOpen(true)}
+                      className="w-full bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 shadow-lg shadow-violet-500/20"
+                    >
+                      <Upload className="h-4 w-4 mr-2" />
+                      Upload Document
+                    </Button>
+                  </div>
+                  <div className="flex-1 overflow-hidden p-4">
+                    <DocumentsPanel />
+                  </div>
                 </div>
-              </div>
-
-              {/* Answer Card */}
-              <Card className="bg-gradient-to-br from-neutral-900/90 to-neutral-900/50 border-neutral-800/50 backdrop-blur-sm shadow-xl">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-xl font-semibold">Research Result</CardTitle>
-                    <ConfidenceBadge confidence={result.confidence} />
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="prose prose-invert prose-sm max-w-none">
-                    <p className="whitespace-pre-wrap leading-relaxed text-neutral-200">
-                      {result.answer}
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Verification Card */}
-              {result.verification && (
-                <Card className="bg-neutral-900/70 border-neutral-800/50 backdrop-blur-sm">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-sm font-medium text-neutral-300 flex items-center gap-2">
-                      <div className="h-2 w-2 rounded-full bg-violet-400"></div>
-                      Verification
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-sm text-neutral-300 leading-relaxed">
-                      {result.verification.overall_assessment}
-                    </p>
-                    {result.verification.unsupported_claims?.length > 0 && (
-                      <div className="mt-3 p-3 rounded-lg bg-amber-950/40 border border-amber-900/50">
-                        <p className="text-xs font-medium text-amber-400 mb-2">
-                          ⚠ Unsupported Claims:
-                        </p>
-                        <ul className="text-xs text-amber-300/90 space-y-1.5">
-                          {result.verification.unsupported_claims.map(
-                            (claim, i) => (
-                              <li key={i} className="pl-2 border-l-2 border-amber-700">
-                                {claim.claim}
-                              </li>
-                            )
-                          )}
-                        </ul>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
               )}
-
-              {/* Sources Toggle */}
+            </div>
+          </div>
+        }
+      >
+        {/* Main Content */}
+        <div className="flex-1 flex flex-col h-full bg-gradient-to-br from-neutral-950 via-neutral-900 to-neutral-950">
+          {/* Header */}
+          <header className="border-b border-neutral-800/50 px-6 py-4 flex items-center justify-between backdrop-blur-sm bg-neutral-900/30">
+            <div>
+              <h1 className="text-3xl font-bold bg-gradient-to-r from-violet-400 via-purple-400 to-cyan-400 bg-clip-text text-transparent flex items-center gap-2">
+                <Sparkles className="h-6 w-6 text-violet-400" />
+                Revera
+              </h1>
+              <p className="text-sm text-neutral-400 mt-0.5">
+                AI-Powered Research Assistant
+              </p>
+            </div>
+            <div className="flex items-center gap-4">
+              <div className="text-right">
+                <p className="text-xs text-neutral-500">Signed in as</p>
+                <p className="text-sm text-neutral-300">{user.email}</p>
+              </div>
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setShowSources(!showSources)}
-                className="text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/50"
+                onClick={signOut}
+                className="text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800"
               >
-                {showSources ? "Hide" : "Show"} Sources
-                <Badge variant="secondary" className="ml-2 bg-neutral-800">
-                  {result.sources.length}
-                </Badge>
+                Sign Out
               </Button>
+            </div>
+          </header>
 
-              {/* Sources List */}
-              {showSources && (
-                <div className="space-y-3">
-                  {result.sources.map((source, i) => (
-                    <SourceCard key={i} source={source} index={i + 1} />
-                  ))}
+          {/* Research Results */}
+          <ScrollArea className="flex-1 p-6">
+            {error && (
+              <Card className="mb-4 border-red-900/50 bg-red-950/30 backdrop-blur-sm">
+                <CardContent className="pt-4">
+                  <p className="text-red-400">{error}</p>
+                </CardContent>
+              </Card>
+            )}
+
+            {result && (
+              <div className="space-y-6 max-w-5xl mx-auto">
+                {/* Query */}
+                <div className="flex items-start gap-3 text-neutral-400 text-sm bg-neutral-900/50 backdrop-blur-sm rounded-lg p-4 border border-neutral-800/50">
+                  <Sparkles className="h-4 w-4 text-violet-400 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <span className="text-neutral-500 text-xs">Query:</span>
+                    <p className="text-neutral-200 mt-1">{result.query}</p>
+                  </div>
                 </div>
-              )}
 
-              {/* Metadata */}
-              <div className="flex items-center gap-6 text-xs text-neutral-500 px-4">
-                <span className="flex items-center gap-1">
-                  <div className="h-1.5 w-1.5 rounded-full bg-violet-500"></div>
-                  Session: {result.session_id.slice(0, 8)}...
-                </span>
-                <span className="flex items-center gap-1">
-                  <div className="h-1.5 w-1.5 rounded-full bg-cyan-500"></div>
-                  Latency: {result.total_latency_ms}ms
-                </span>
+                {/* Answer Card */}
+                <Card className="bg-gradient-to-br from-neutral-900/90 to-neutral-900/50 border-neutral-800/50 backdrop-blur-sm shadow-xl">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-xl font-semibold">Research Result</CardTitle>
+                      <ConfidenceBadge confidence={result.confidence} />
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="prose prose-invert prose-sm max-w-none">
+                      <p className="whitespace-pre-wrap leading-relaxed text-neutral-200">
+                        {result.answer}
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Verification Card */}
+                {result.verification && (
+                  <Card className="bg-neutral-900/70 border-neutral-800/50 backdrop-blur-sm">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm font-medium text-neutral-300 flex items-center gap-2">
+                        <div className="h-2 w-2 rounded-full bg-violet-400"></div>
+                        Verification
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-sm text-neutral-300 leading-relaxed">
+                        {result.verification.overall_assessment}
+                      </p>
+                      {result.verification.unsupported_claims?.length > 0 && (
+                        <div className="mt-3 p-3 rounded-lg bg-amber-950/40 border border-amber-900/50">
+                          <p className="text-xs font-medium text-amber-400 mb-2">
+                            ⚠ Unsupported Claims:
+                          </p>
+                          <ul className="text-xs text-amber-300/90 space-y-1.5">
+                            {result.verification.unsupported_claims.map(
+                              (claim, i) => (
+                                <li key={i} className="pl-2 border-l-2 border-amber-700">
+                                  {claim.claim}
+                                </li>
+                              )
+                            )}
+                          </ul>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Sources Toggle */}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowSources(!showSources)}
+                  className="text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/50"
+                >
+                  {showSources ? "Hide" : "Show"} Sources
+                  <Badge variant="secondary" className="ml-2 bg-neutral-800">
+                    {result.sources?.length || 0}
+                  </Badge>
+                </Button>
+
+                {/* Sources List */}
+                {showSources && (
+                  <div className="space-y-3">
+                    {result.sources?.map((source, i) => (
+                      <SourceCard key={i} source={source} index={i + 1} />
+                    ))}
+                  </div>
+                )}
+
+                {/* Metadata */}
+                <div className="flex items-center gap-6 text-xs text-neutral-500 px-4">
+                  <span className="flex items-center gap-1">
+                    <div className="h-1.5 w-1.5 rounded-full bg-violet-500"></div>
+                    Session: {(result.session_id || currentSessionId)?.slice(0, 8)}...
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <div className="h-1.5 w-1.5 rounded-full bg-cyan-500"></div>
+                    Latency: {result.total_latency_ms || 0}ms
+                  </span>
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {!result && !isLoading && (
-            <div className="flex flex-col items-center justify-center h-full text-center">
-              <div className="relative">
-                <div className="absolute inset-0 bg-gradient-to-r from-violet-600 to-cyan-600 blur-3xl opacity-20 rounded-full"></div>
-                <div className="relative text-8xl mb-6">🔬</div>
+            {!result && !isLoading && (
+              <div className="flex flex-col items-center justify-center h-full text-center">
+                <div className="relative">
+                  <div className="absolute inset-0 bg-gradient-to-r from-violet-600 to-cyan-600 blur-3xl opacity-20 rounded-full"></div>
+                  <div className="relative text-8xl mb-6">🔬</div>
+                </div>
+                <h2 className="text-2xl font-semibold text-neutral-200 mb-3">
+                  Start Your Research
+                </h2>
+                <p className="text-neutral-400 max-w-md leading-relaxed">
+                  Ask a question to search your documents and the web. Get
+                  verified, cited answers with full transparency.
+                </p>
               </div>
-              <h2 className="text-2xl font-semibold text-neutral-200 mb-3">
-                Start Your Research
-              </h2>
-              <p className="text-neutral-400 max-w-md leading-relaxed">
-                Ask a question to search your documents and the web. Get
-                verified, cited answers with full transparency.
-              </p>
-            </div>
-          )}
+            )}
 
-          {isLoading && (
-            <div className="flex flex-col items-center justify-center h-full">
-              <div className="relative mb-6">
-                <div className="absolute inset-0 bg-violet-600 blur-2xl opacity-30 rounded-full"></div>
-                <Loader2 className="relative h-16 w-16 text-violet-400 animate-spin" />
+            {isLoading && (
+              <div className="flex flex-col items-center justify-center h-full">
+                <div className="relative mb-6">
+                  <div className="absolute inset-0 bg-violet-600 blur-2xl opacity-30 rounded-full"></div>
+                  <Loader2 className="relative h-16 w-16 text-violet-400 animate-spin" />
+                </div>
+                <p className="text-neutral-300 text-lg mb-2">Researching...</p>
+                <p className="text-sm text-neutral-500">
+                  Planning → Retrieving → Synthesizing → Verifying
+                </p>
               </div>
-              <p className="text-neutral-300 text-lg mb-2">Researching...</p>
-              <p className="text-sm text-neutral-500">
-                Planning → Retrieving → Synthesizing → Verifying
-              </p>
-            </div>
-          )}
-        </ScrollArea>
+            )}
+          </ScrollArea>
 
-        {/* Input Area */}
-        <div className="border-t border-neutral-800/50 p-4 backdrop-blur-sm bg-neutral-900/30">
-          <div className="max-w-5xl mx-auto">
-            <div className="flex gap-3">
-              <Textarea
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Ask a research question..."
-                className="min-h-[70px] max-h-[140px] bg-neutral-900/70 border-neutral-700/50 resize-none text-base backdrop-blur-sm focus:border-violet-500/50 transition-colors"
-                disabled={isLoading}
-              />
-              <Button
-                onClick={handleSubmit}
-                disabled={isLoading || !query.trim()}
-                className="bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 px-8 shadow-lg shadow-violet-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : "Research"}
-              </Button>
+          {/* Input Area */}
+          <div className="border-t border-neutral-800/50 p-4 backdrop-blur-sm bg-neutral-900/30">
+            <div className="max-w-5xl mx-auto">
+              <div className="flex gap-3">
+                <Textarea
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Ask a research question..."
+                  className="min-h-[70px] max-h-[140px] bg-neutral-900/70 border-neutral-700/50 resize-none text-base backdrop-blur-sm focus:border-violet-500/50 transition-colors"
+                  disabled={isLoading}
+                />
+                <Button
+                  onClick={handleSubmit}
+                  disabled={isLoading || !query.trim()}
+                  className="bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 px-8 shadow-lg shadow-violet-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : "Research"}
+                </Button>
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Upload Dialog */}
-      <UploadDialog
-        open={uploadDialogOpen}
-        onOpenChange={setUploadDialogOpen}
-        onUploadSuccess={() => {
-          // Refresh documents if needed
-        }}
-      />
+        {/* Upload Dialog */}
+        <UploadDialog
+          open={uploadDialogOpen}
+          onOpenChange={setUploadDialogOpen}
+          onUploadSuccess={() => {
+            // Refresh documents if needed
+          }}
+        />
+      </ResizableLayout>
     </div>
   );
 }
