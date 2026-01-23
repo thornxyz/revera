@@ -79,7 +79,7 @@ export function SessionsSidebar({
     };
 
     return (
-        <div className="h-full flex flex-col overflow-hidden">
+        <div className="h-full flex flex-col overflow-x-auto overflow-y-hidden">
             <div className="p-4 border-b border-slate-200">
                 <Button
                     onClick={onNewChat}
@@ -90,7 +90,7 @@ export function SessionsSidebar({
                 </Button>
             </div>
 
-            <ScrollArea className="flex-1 w-full overflow-x-hidden">
+            <ScrollArea className="flex-1 w-full overflow-x-auto">
                 <div className="p-3 space-y-2 w-full">
                     {isLoading ? (
                         <div className="flex justify-center p-4">
@@ -106,20 +106,22 @@ export function SessionsSidebar({
                                 key={session.id}
                                 onClick={() => onSessionSelect(session.id)}
                                 className={cn(
-                                    "group flex w-full min-w-0 items-center gap-2 rounded-lg border px-3 py-2.5 cursor-pointer transition-all hover:bg-slate-100 overflow-hidden",
+                                    "group flex w-full min-w-0 items-start gap-2 rounded-lg border px-3 py-2.5 cursor-pointer transition-all hover:bg-slate-100",
                                     currentSessionId === session.id
                                         ? "bg-emerald-50 border-emerald-200"
                                         : "border-slate-200"
                                 )}
                             >
                                 <div className="flex min-w-0 flex-1 flex-col gap-1">
-                                    <p className={cn(
-                                        "text-sm font-medium truncate",
-                                        currentSessionId === session.id ? "text-emerald-700" : "text-slate-700"
-                                    )}>
+                                    <p
+                                        className={cn(
+                                            "text-sm font-medium leading-snug whitespace-normal break-words",
+                                            currentSessionId === session.id ? "text-emerald-700" : "text-slate-700"
+                                        )}
+                                    >
                                         {session.query}
                                     </p>
-                                    <p className="text-[11px] text-slate-500 truncate">
+                                    <p className="text-[11px] text-slate-500">
                                         {formatDistanceToNow(new Date(session.created_at), { addSuffix: true })}
                                     </p>
                                 </div>

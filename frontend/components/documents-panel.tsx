@@ -151,10 +151,13 @@ export function DocumentsPanel({ onDocumentSelect }: DocumentsPanelProps) {
                                 onClick={() => toggleSelect(doc.id)}
                             >
                                 <CardContent className="p-3">
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex items-start gap-2">
                                         <span className="text-lg">📄</span>
-                                        <div className="flex-1 min-w-0 overflow-hidden">
-                                            <p className="text-sm font-medium truncate" title={doc.filename}>
+                                        <div className="flex-1 min-w-0">
+                                            <p
+                                                className="text-sm font-medium leading-snug whitespace-normal break-words"
+                                                title={doc.filename}
+                                            >
                                                 {doc.filename}
                                             </p>
                                             <p className="text-xs text-slate-500">

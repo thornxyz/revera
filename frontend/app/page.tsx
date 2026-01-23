@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { DocumentsPanel } from "@/components/documents-panel";
 import { UploadDialog } from "@/components/upload-dialog";
 import { SessionsSidebar } from "@/components/sessions-sidebar";
+import { AgentTimelinePanel } from "@/components/agent-timeline";
 import { research, getSession, ResearchResponse, Source } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { ResizableLayout } from "@/components/resizable-layout";
@@ -25,8 +26,11 @@ export default function ResearchPage() {
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
 
   // Multiple Chats State
-  const [activeTab, setActiveTab] = useState<"chat" | "documents">("chat");
+  const [activeTab, setActiveTab] = useState<"chat" | "documents" | "timeline">(
+    "chat"
+  );
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
 
   // Show loading state
   if (loading) {
@@ -46,10 +50,14 @@ export default function ResearchPage() {
     if (!query.trim()) return;
 
     setIsLoading(true);
-    setError(null);
+      setError(null);
 
     try {
-      const response = await research(query, true);
+      const response = await research(
+        query,
+        true,
+        selectedDocumentIds.length ? selectedDocumentIds : undefined
+      );
       setResult(response);
       setCurrentSessionId(response.session_id); // Track current session
       setQuery("");
@@ -96,7 +104,7 @@ export default function ResearchPage() {
     <div className="flex h-screen bg-linear-to-br from-slate-50 via-white to-emerald-50 text-slate-900">
       <ResizableLayout
         sidebar={
-          <div className="h-full flex flex-col overflow-hidden">
+          <div className="h-full flex flex-col overflow-x-auto overflow-y-hidden">
             {/* Sidebar Tabs */}
             <div className="flex border-b border-slate-200/70 bg-white/80">
               <button
@@ -117,6 +125,15 @@ export default function ResearchPage() {
               >
                 Documents
               </button>
+              <button
+                onClick={() => setActiveTab("timeline")}
+                className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === "timeline"
+                  ? "text-emerald-700 border-b-2 border-emerald-500 bg-emerald-50"
+                  : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+                  }`}
+              >
+                Timeline
+              </button>
             </div>
 
             {/* Sidebar Content */}
@@ -127,7 +144,7 @@ export default function ResearchPage() {
                   onSessionSelect={handleSessionSelect}
                   onNewChat={handleNewChat}
                 />
-              ) : (
+              ) : activeTab === "documents" ? (
                 <div className="h-full flex flex-col">
                   <div className="p-4 border-b border-slate-200/70">
                     <Button
@@ -139,7 +156,21 @@ export default function ResearchPage() {
                     </Button>
                   </div>
                   <div className="flex-1 overflow-hidden p-4">
-                    <DocumentsPanel />
+                    <DocumentsPanel onDocumentSelect={setSelectedDocumentIds} />
+                  </div>
+                </div>
+              ) : (
+                <div className="h-full flex flex-col">
+                  <div className="p-4 border-b border-slate-200/70">
+                    <p className="text-sm font-medium text-slate-700">
+                      Agent Timeline
+                    </p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Track each agent step for the current session.
+                    </p>
+                  </div>
+                  <div className="flex-1 overflow-hidden">
+                    <AgentTimelinePanel sessionId={currentSessionId} />
                   </div>
                 </div>
               )}
@@ -148,7 +179,7 @@ export default function ResearchPage() {
         }
       >
         {/* Main Content */}
-        <div className="flex-1 flex flex-col h-full bg-linear-to-br from-white via-slate-50 to-emerald-50">
+        <div className="flex-1 flex flex-col h-full min-h-0 bg-linear-to-br from-white via-slate-50 to-emerald-50">
           {/* Header */}
           <header className="border-b border-slate-200/70 px-4 sm:px-6 py-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between backdrop-blur-sm bg-white/70">
             <div>
@@ -177,7 +208,7 @@ export default function ResearchPage() {
           </header>
 
           {/* Research Results */}
-          <ScrollArea className="flex-1 p-4 sm:p-6">
+          <ScrollArea className="flex-1 min-h-0 p-4 sm:p-6">
             {error && (
               <Card className="mb-4 border-rose-200 bg-rose-50/80 backdrop-blur-sm">
                 <CardContent className="pt-4">

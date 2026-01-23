@@ -65,6 +65,12 @@ flowchart TB
     Supabase --> Ingestion
 ```
 
+## Implementation Notes
+
+- Agent timeline UI exists in `frontend/components/agent-timeline.tsx` and the timeline API is implemented, but it is not yet wired into `frontend/app/page.tsx`.
+- Feedback submission is implemented in the backend (`/api/feedback/`) with a frontend helper (`frontend/lib/api.ts`), but there is no UI to submit feedback yet.
+- Document selection in the documents panel is not passed to research requests yet (the backend accepts `document_ids`).
+
 ## Tech Stack
 
 | Layer | Technology |

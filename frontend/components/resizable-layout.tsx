@@ -91,7 +91,7 @@ export function ResizableLayout({
             <div
                 ref={sidebarRef}
                 style={{ width: sidebarWidth }}
-                className="shrink-0 border-r border-slate-200/70 bg-white/80 backdrop-blur-sm overflow-hidden"
+                className="shrink-0 border-r border-slate-200/70 bg-white/80 backdrop-blur-sm overflow-x-auto overflow-y-hidden"
             >
                 {sidebar}
             </div>
