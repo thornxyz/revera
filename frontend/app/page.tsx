@@ -31,8 +31,8 @@ export default function ResearchPage() {
   // Show loading state
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-neutral-950 via-neutral-900 to-neutral-950 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-violet-500"></div>
+      <div className="min-h-screen bg-linear-to-br from-slate-50 via-white to-emerald-50 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-emerald-500"></div>
       </div>
     );
   }
@@ -66,7 +66,8 @@ export default function ResearchPage() {
     try {
       const session = await getSession(sessionId);
       if (session.result) {
-        setResult(session.result);
+        const resolvedQuery = session.result.query?.trim() || session.query;
+        setResult({ ...session.result, query: resolvedQuery });
       }
       setCurrentSessionId(sessionId);
       // Don't set query, as we want to start fresh or just view result
@@ -92,17 +93,17 @@ export default function ResearchPage() {
   };
 
   return (
-    <div className="flex h-screen bg-gradient-to-br from-neutral-950 via-neutral-900 to-neutral-950 text-neutral-50">
+    <div className="flex h-screen bg-linear-to-br from-slate-50 via-white to-emerald-50 text-slate-900">
       <ResizableLayout
         sidebar={
           <div className="h-full flex flex-col overflow-hidden">
             {/* Sidebar Tabs */}
-            <div className="flex border-b border-neutral-800/50">
+            <div className="flex border-b border-slate-200/70 bg-white/80">
               <button
                 onClick={() => setActiveTab("chat")}
                 className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === "chat"
-                  ? "text-violet-400 border-b-2 border-violet-500 bg-violet-900/10"
-                  : "text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/30"
+                  ? "text-emerald-700 border-b-2 border-emerald-500 bg-emerald-50"
+                  : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
                   }`}
               >
                 Chats
@@ -110,8 +111,8 @@ export default function ResearchPage() {
               <button
                 onClick={() => setActiveTab("documents")}
                 className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === "documents"
-                  ? "text-violet-400 border-b-2 border-violet-500 bg-violet-900/10"
-                  : "text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/30"
+                  ? "text-emerald-700 border-b-2 border-emerald-500 bg-emerald-50"
+                  : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
                   }`}
               >
                 Documents
@@ -128,10 +129,10 @@ export default function ResearchPage() {
                 />
               ) : (
                 <div className="h-full flex flex-col">
-                  <div className="p-4 border-b border-neutral-800/50">
+                  <div className="p-4 border-b border-slate-200/70">
                     <Button
                       onClick={() => setUploadDialogOpen(true)}
-                      className="w-full bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 shadow-lg shadow-violet-500/20"
+                      className="w-full bg-linear-to-r from-emerald-500 to-teal-500 hover:from-emerald-500 hover:to-teal-400 shadow-sm shadow-emerald-500/20"
                     >
                       <Upload className="h-4 w-4 mr-2" />
                       Upload Document
@@ -147,28 +148,28 @@ export default function ResearchPage() {
         }
       >
         {/* Main Content */}
-        <div className="flex-1 flex flex-col h-full bg-gradient-to-br from-neutral-950 via-neutral-900 to-neutral-950">
+        <div className="flex-1 flex flex-col h-full bg-linear-to-br from-white via-slate-50 to-emerald-50">
           {/* Header */}
-          <header className="border-b border-neutral-800/50 px-6 py-4 flex items-center justify-between backdrop-blur-sm bg-neutral-900/30">
+          <header className="border-b border-slate-200/70 px-4 sm:px-6 py-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between backdrop-blur-sm bg-white/70">
             <div>
-              <h1 className="text-3xl font-bold bg-gradient-to-r from-violet-400 via-purple-400 to-cyan-400 bg-clip-text text-transparent flex items-center gap-2">
-                <Sparkles className="h-6 w-6 text-violet-400" />
+              <h1 className="text-3xl font-bold bg-linear-to-r from-emerald-600 via-teal-500 to-sky-500 bg-clip-text text-transparent flex items-center gap-2">
+                <Sparkles className="h-6 w-6 text-emerald-500" />
                 Revera
               </h1>
-              <p className="text-sm text-neutral-400 mt-0.5">
+              <p className="text-sm text-slate-500 mt-0.5">
                 AI-Powered Research Assistant
               </p>
             </div>
-            <div className="flex items-center gap-4">
-              <div className="text-right">
-                <p className="text-xs text-neutral-500">Signed in as</p>
-                <p className="text-sm text-neutral-300">{user.email}</p>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+              <div className="text-left sm:text-right">
+                <p className="text-xs text-slate-500">Signed in as</p>
+                <p className="text-sm text-slate-700 break-all sm:break-normal">{user.email}</p>
               </div>
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={signOut}
-                className="text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800"
+                className="text-slate-500 hover:text-slate-700 hover:bg-slate-100"
               >
                 Sign Out
               </Button>
@@ -176,11 +177,11 @@ export default function ResearchPage() {
           </header>
 
           {/* Research Results */}
-          <ScrollArea className="flex-1 p-6">
+          <ScrollArea className="flex-1 p-4 sm:p-6">
             {error && (
-              <Card className="mb-4 border-red-900/50 bg-red-950/30 backdrop-blur-sm">
+              <Card className="mb-4 border-rose-200 bg-rose-50/80 backdrop-blur-sm">
                 <CardContent className="pt-4">
-                  <p className="text-red-400">{error}</p>
+                  <p className="text-rose-600">{error}</p>
                 </CardContent>
               </Card>
             )}
@@ -188,16 +189,16 @@ export default function ResearchPage() {
             {result && (
               <div className="space-y-6 max-w-5xl mx-auto">
                 {/* Query */}
-                <div className="flex items-start gap-3 text-neutral-400 text-sm bg-neutral-900/50 backdrop-blur-sm rounded-lg p-4 border border-neutral-800/50">
-                  <Sparkles className="h-4 w-4 text-violet-400 mt-0.5 flex-shrink-0" />
+                <div className="flex items-start gap-3 text-slate-500 text-sm bg-white/80 backdrop-blur-sm rounded-lg p-4 border border-slate-200">
+                  <Sparkles className="h-4 w-4 text-emerald-500 mt-0.5 shrink-0" />
                   <div>
-                    <span className="text-neutral-500 text-xs">Query:</span>
-                    <p className="text-neutral-200 mt-1">{result.query}</p>
+                    <span className="text-slate-400 text-xs">Query:</span>
+                    <p className="text-slate-700 mt-1">{result.query}</p>
                   </div>
                 </div>
 
                 {/* Answer Card */}
-                <Card className="bg-gradient-to-br from-neutral-900/90 to-neutral-900/50 border-neutral-800/50 backdrop-blur-sm shadow-xl">
+                <Card className="bg-white/90 border-slate-200/80 backdrop-blur-sm shadow-lg">
                   <CardHeader className="pb-3">
                     <div className="flex items-center justify-between">
                       <CardTitle className="text-xl font-semibold">Research Result</CardTitle>
@@ -205,8 +206,8 @@ export default function ResearchPage() {
                     </div>
                   </CardHeader>
                   <CardContent>
-                    <div className="prose prose-invert prose-sm max-w-none">
-                      <p className="whitespace-pre-wrap leading-relaxed text-neutral-200">
+                    <div className="prose prose-slate prose-sm max-w-none">
+                      <p className="whitespace-pre-wrap leading-relaxed text-slate-700">
                         {result.answer}
                       </p>
                     </div>
@@ -215,26 +216,26 @@ export default function ResearchPage() {
 
                 {/* Verification Card */}
                 {result.verification && (
-                  <Card className="bg-neutral-900/70 border-neutral-800/50 backdrop-blur-sm">
+                  <Card className="bg-white/90 border-slate-200/80 backdrop-blur-sm">
                     <CardHeader className="pb-3">
-                      <CardTitle className="text-sm font-medium text-neutral-300 flex items-center gap-2">
-                        <div className="h-2 w-2 rounded-full bg-violet-400"></div>
+                      <CardTitle className="text-sm font-medium text-slate-600 flex items-center gap-2">
+                        <div className="h-2 w-2 rounded-full bg-emerald-500"></div>
                         Verification
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
-                      <p className="text-sm text-neutral-300 leading-relaxed">
+                      <p className="text-sm text-slate-600 leading-relaxed">
                         {result.verification.overall_assessment}
                       </p>
                       {result.verification.unsupported_claims?.length > 0 && (
-                        <div className="mt-3 p-3 rounded-lg bg-amber-950/40 border border-amber-900/50">
-                          <p className="text-xs font-medium text-amber-400 mb-2">
+                        <div className="mt-3 p-3 rounded-lg bg-amber-50 border border-amber-200">
+                          <p className="text-xs font-medium text-amber-600 mb-2">
                             ⚠ Unsupported Claims:
                           </p>
-                          <ul className="text-xs text-amber-300/90 space-y-1.5">
+                          <ul className="text-xs text-amber-700/90 space-y-1.5">
                             {result.verification.unsupported_claims.map(
                               (claim, i) => (
-                                <li key={i} className="pl-2 border-l-2 border-amber-700">
+                                <li key={i} className="pl-2 border-l-2 border-amber-300">
                                   {claim.claim}
                                 </li>
                               )
@@ -251,10 +252,10 @@ export default function ResearchPage() {
                   variant="ghost"
                   size="sm"
                   onClick={() => setShowSources(!showSources)}
-                  className="text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/50"
+                  className="text-slate-500 hover:text-slate-700 hover:bg-slate-100"
                 >
                   {showSources ? "Hide" : "Show"} Sources
-                  <Badge variant="secondary" className="ml-2 bg-neutral-800">
+                  <Badge variant="secondary" className="ml-2 bg-slate-100 text-slate-600">
                     {result.sources?.length || 0}
                   </Badge>
                 </Button>
@@ -269,13 +270,13 @@ export default function ResearchPage() {
                 )}
 
                 {/* Metadata */}
-                <div className="flex items-center gap-6 text-xs text-neutral-500 px-4">
+                <div className="flex flex-wrap items-center gap-4 text-xs text-slate-500 px-4">
                   <span className="flex items-center gap-1">
-                    <div className="h-1.5 w-1.5 rounded-full bg-violet-500"></div>
+                    <div className="h-1.5 w-1.5 rounded-full bg-emerald-500"></div>
                     Session: {(result.session_id || currentSessionId)?.slice(0, 8)}...
                   </span>
                   <span className="flex items-center gap-1">
-                    <div className="h-1.5 w-1.5 rounded-full bg-cyan-500"></div>
+                    <div className="h-1.5 w-1.5 rounded-full bg-sky-500"></div>
                     Latency: {result.total_latency_ms || 0}ms
                   </span>
                 </div>
@@ -283,15 +284,15 @@ export default function ResearchPage() {
             )}
 
             {!result && !isLoading && (
-              <div className="flex flex-col items-center justify-center h-full text-center">
+              <div className="flex flex-col items-center justify-center h-full text-center px-4">
                 <div className="relative">
-                  <div className="absolute inset-0 bg-gradient-to-r from-violet-600 to-cyan-600 blur-3xl opacity-20 rounded-full"></div>
-                  <div className="relative text-8xl mb-6">🔬</div>
+                  <div className="absolute inset-0 bg-linear-to-r from-emerald-400 to-sky-400 blur-3xl opacity-20 rounded-full"></div>
+                  <div className="relative text-7xl sm:text-8xl mb-6">🔬</div>
                 </div>
-                <h2 className="text-2xl font-semibold text-neutral-200 mb-3">
+                <h2 className="text-2xl font-semibold text-slate-800 mb-3">
                   Start Your Research
                 </h2>
-                <p className="text-neutral-400 max-w-md leading-relaxed">
+                <p className="text-slate-500 max-w-md leading-relaxed">
                   Ask a question to search your documents and the web. Get
                   verified, cited answers with full transparency.
                 </p>
@@ -301,11 +302,11 @@ export default function ResearchPage() {
             {isLoading && (
               <div className="flex flex-col items-center justify-center h-full">
                 <div className="relative mb-6">
-                  <div className="absolute inset-0 bg-violet-600 blur-2xl opacity-30 rounded-full"></div>
-                  <Loader2 className="relative h-16 w-16 text-violet-400 animate-spin" />
+                  <div className="absolute inset-0 bg-emerald-300 blur-2xl opacity-30 rounded-full"></div>
+                  <Loader2 className="relative h-16 w-16 text-emerald-500 animate-spin" />
                 </div>
-                <p className="text-neutral-300 text-lg mb-2">Researching...</p>
-                <p className="text-sm text-neutral-500">
+                <p className="text-slate-700 text-lg mb-2">Researching...</p>
+                <p className="text-sm text-slate-500">
                   Planning → Retrieving → Synthesizing → Verifying
                 </p>
               </div>
@@ -313,21 +314,21 @@ export default function ResearchPage() {
           </ScrollArea>
 
           {/* Input Area */}
-          <div className="border-t border-neutral-800/50 p-4 backdrop-blur-sm bg-neutral-900/30">
+          <div className="border-t border-slate-200/70 p-4 sm:p-5 backdrop-blur-sm bg-white/80">
             <div className="max-w-5xl mx-auto">
-              <div className="flex gap-3">
+              <div className="flex flex-col gap-3 sm:flex-row">
                 <Textarea
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder="Ask a research question..."
-                  className="min-h-[70px] max-h-[140px] bg-neutral-900/70 border-neutral-700/50 resize-none text-base backdrop-blur-sm focus:border-violet-500/50 transition-colors"
+                  className="min-h-17.5 max-h-35 bg-white border-slate-200/70 resize-none text-base focus:border-emerald-400/70 focus:ring-emerald-200 transition-colors"
                   disabled={isLoading}
                 />
                 <Button
                   onClick={handleSubmit}
                   disabled={isLoading || !query.trim()}
-                  className="bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 px-8 shadow-lg shadow-violet-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="bg-linear-to-r from-emerald-500 to-teal-500 hover:from-emerald-500 hover:to-teal-400 px-8 shadow-sm shadow-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed w-full sm:w-auto"
                 >
                   {isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : "Research"}
                 </Button>
@@ -352,27 +353,27 @@ export default function ResearchPage() {
 function ConfidenceBadge({ confidence }: { confidence: string }) {
   const config: Record<string, { bg: string; text: string; border: string; label: string }> = {
     verified: {
-      bg: "bg-green-900/40",
-      text: "text-green-400",
-      border: "border-green-700/50",
+      bg: "bg-emerald-100",
+      text: "text-emerald-700",
+      border: "border-emerald-200",
       label: "✓ Verified"
     },
     partial: {
-      bg: "bg-amber-900/40",
-      text: "text-amber-400",
-      border: "border-amber-700/50",
+      bg: "bg-amber-100",
+      text: "text-amber-700",
+      border: "border-amber-200",
       label: "⚠ Partial"
     },
     unverified: {
-      bg: "bg-red-900/40",
-      text: "text-red-400",
-      border: "border-red-700/50",
+      bg: "bg-rose-100",
+      text: "text-rose-700",
+      border: "border-rose-200",
       label: "✗ Unverified"
     },
     unknown: {
-      bg: "bg-neutral-800/50",
-      text: "text-neutral-400",
-      border: "border-neutral-700/50",
+      bg: "bg-slate-100",
+      text: "text-slate-600",
+      border: "border-slate-200",
       label: "Unknown"
     },
   };
@@ -390,14 +391,14 @@ function ConfidenceBadge({ confidence }: { confidence: string }) {
 
 function SourceCard({ source, index }: { source: Source; index: number }) {
   return (
-    <Card className="bg-neutral-900/60 border-neutral-800/50 backdrop-blur-sm hover:border-neutral-700/50 transition-all">
+    <Card className="bg-white/80 border-slate-200/80 backdrop-blur-sm hover:border-slate-300 transition-all">
       <CardContent className="p-4">
         <div className="flex items-start gap-4">
-          <div className="flex-shrink-0 flex flex-col items-center gap-1">
-            <span className="text-xs font-mono bg-gradient-to-br from-violet-600 to-purple-600 text-white px-2.5 py-1 rounded-md shadow-sm">
+          <div className="shrink-0 flex flex-col items-center gap-1">
+            <span className="text-xs font-mono bg-linear-to-br from-emerald-500 to-teal-500 text-white px-2.5 py-1 rounded-md shadow-sm">
               {index}
             </span>
-            <span className="text-[10px] text-neutral-500">
+            <span className="text-[10px] text-slate-500">
               {(source.score * 100).toFixed(0)}%
             </span>
           </div>
@@ -405,8 +406,8 @@ function SourceCard({ source, index }: { source: Source; index: number }) {
             <div className="flex items-center gap-2 mb-2">
               <Badge
                 className={`text-[10px] px-2 py-0.5 ${source.type === "internal"
-                  ? "bg-blue-900/50 text-blue-400 border-blue-700/50"
-                  : "bg-purple-900/50 text-purple-400 border-purple-700/50"
+                  ? "bg-sky-100 text-sky-700 border-sky-200"
+                  : "bg-emerald-100 text-emerald-700 border-emerald-200"
                   }`}
               >
                 {source.type === "internal" ? "📄 Internal" : "🌐 Web"}
@@ -416,13 +417,13 @@ function SourceCard({ source, index }: { source: Source; index: number }) {
                   href={source.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-xs text-violet-400 hover:text-violet-300 hover:underline truncate transition-colors"
+                  className="text-xs text-emerald-600 hover:text-emerald-500 hover:underline truncate transition-colors"
                 >
                   {source.title || source.url}
                 </a>
               )}
             </div>
-            <p className="text-sm text-neutral-300 line-clamp-3 leading-relaxed">
+            <p className="text-sm text-slate-600 line-clamp-3 leading-relaxed">
               {source.content.slice(0, 250)}
               {source.content.length > 250 && "..."}
             </p>

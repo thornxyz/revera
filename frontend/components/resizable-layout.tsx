@@ -14,17 +14,20 @@ interface ResizableLayoutProps {
 export function ResizableLayout({
     sidebar,
     children,
-    defaultWidth = 320,
-    minWidth = 200,
+    defaultWidth,
+    minWidth = 80,
     maxWidth = 500,
 }: ResizableLayoutProps) {
-    const [sidebarWidth, setSidebarWidth] = useState(defaultWidth);
+    const [sidebarWidth, setSidebarWidth] = useState(defaultWidth ?? 280);
     const [isResizing, setIsResizing] = useState(false);
+    const [hasCustomWidth, setHasCustomWidth] = useState(Boolean(defaultWidth));
+    const [minWidthFloor, setMinWidthFloor] = useState(minWidth);
     const sidebarRef = useRef<HTMLDivElement>(null);
 
     const startResizing = useCallback((e: React.MouseEvent) => {
         e.preventDefault();
         setIsResizing(true);
+        setHasCustomWidth(true);
     }, []);
 
     const stopResizing = useCallback(() => {
@@ -35,13 +38,40 @@ export function ResizableLayout({
         (e: MouseEvent) => {
             if (isResizing && sidebarRef.current) {
                 const newWidth = e.clientX - sidebarRef.current.getBoundingClientRect().left;
-                if (newWidth >= minWidth && newWidth <= maxWidth) {
+                if (newWidth >= minWidthFloor && newWidth <= maxWidth) {
                     setSidebarWidth(newWidth);
                 }
             }
         },
-        [isResizing, minWidth, maxWidth]
+        [isResizing, minWidthFloor, maxWidth]
     );
+
+    useEffect(() => {
+        const updateSizing = () => {
+            const viewportWidth = window.innerWidth;
+            const nextMinWidth = Math.max(minWidth, Math.round(viewportWidth * 0.125));
+            setMinWidthFloor(nextMinWidth);
+
+            if (defaultWidth) {
+                setSidebarWidth(Math.max(defaultWidth, nextMinWidth));
+                return;
+            }
+
+            if (!hasCustomWidth) {
+                const nextWidth = Math.max(
+                    nextMinWidth,
+                    Math.min(maxWidth, Math.round(viewportWidth * 0.25))
+                );
+                setSidebarWidth(nextWidth);
+            } else {
+                setSidebarWidth((prev) => Math.max(prev, nextMinWidth));
+            }
+        };
+
+        updateSizing();
+        window.addEventListener("resize", updateSizing);
+        return () => window.removeEventListener("resize", updateSizing);
+    }, [defaultWidth, minWidth, maxWidth, hasCustomWidth]);
 
     useEffect(() => {
         if (isResizing) {
@@ -61,20 +91,20 @@ export function ResizableLayout({
             <div
                 ref={sidebarRef}
                 style={{ width: sidebarWidth }}
-                className="flex-shrink-0 border-r border-neutral-800/50 backdrop-blur-sm bg-neutral-900/30 overflow-hidden"
+                className="shrink-0 border-r border-slate-200/70 bg-white/80 backdrop-blur-sm overflow-hidden"
             >
                 {sidebar}
             </div>
 
             {/* Resize Handle */}
             <div
-                className={`w-1.5 cursor-col-resize flex-shrink-0 transition-colors ${isResizing ? "bg-violet-500" : "bg-neutral-800/50 hover:bg-violet-500/50"
+                className={`w-1.5 cursor-col-resize shrink-0 transition-colors ${isResizing ? "bg-emerald-400" : "bg-slate-200/80 hover:bg-emerald-300/70"
                     }`}
                 onMouseDown={startResizing}
             />
 
             {/* Main Content */}
-            <div className="flex-1 overflow-hidden">
+            <div className="flex-1 min-w-0 overflow-hidden">
                 {children}
             </div>
         </div>

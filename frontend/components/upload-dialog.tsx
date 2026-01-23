@@ -72,13 +72,13 @@ export function UploadDialog({ open, onOpenChange, onUploadSuccess }: UploadDial
 
     return (
         <Dialog open={open} onOpenChange={handleClose}>
-            <DialogContent className="bg-neutral-900 border-neutral-800 text-neutral-50">
+            <DialogContent className="bg-white border-slate-200 text-slate-900">
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2">
-                        <Upload className="h-5 w-5 text-violet-400" />
+                        <Upload className="h-5 w-5 text-emerald-500" />
                         Upload Document
                     </DialogTitle>
-                    <DialogDescription className="text-neutral-400">
+                    <DialogDescription className="text-slate-500">
                         Upload a PDF document to add to your research knowledge base.
                     </DialogDescription>
                 </DialogHeader>
@@ -86,13 +86,13 @@ export function UploadDialog({ open, onOpenChange, onUploadSuccess }: UploadDial
                 <div className="space-y-4">
                     {/* File Input */}
                     {!file && !success && (
-                        <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-neutral-700 rounded-lg cursor-pointer hover:border-violet-500 transition-colors">
+                        <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-slate-200 rounded-lg cursor-pointer hover:border-emerald-400 transition-colors">
                             <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                                <Upload className="h-8 w-8 text-neutral-500 mb-2" />
-                                <p className="text-sm text-neutral-400">
+                                <Upload className="h-8 w-8 text-slate-400 mb-2" />
+                                <p className="text-sm text-slate-600">
                                     <span className="font-semibold">Click to upload</span> or drag and drop
                                 </p>
-                                <p className="text-xs text-neutral-500 mt-1">
+                                <p className="text-xs text-slate-500 mt-1">
                                     PDF files only (max 50MB)
                                 </p>
                             </div>
@@ -107,17 +107,17 @@ export function UploadDialog({ open, onOpenChange, onUploadSuccess }: UploadDial
 
                     {/* Selected File */}
                     {file && !success && (
-                        <div className="flex items-center gap-3 p-3 bg-neutral-800 rounded-lg">
-                            <File className="h-8 w-8 text-violet-400" />
+                        <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
+                            <File className="h-8 w-8 text-emerald-500" />
                             <div className="flex-1 min-w-0">
                                 <p className="text-sm font-medium truncate">{file.name}</p>
-                                <p className="text-xs text-neutral-500">
+                                <p className="text-xs text-slate-500">
                                     {(file.size / 1024 / 1024).toFixed(2)} MB
                                 </p>
                             </div>
                             <button
                                 onClick={() => setFile(null)}
-                                className="text-neutral-400 hover:text-neutral-200"
+                                className="text-slate-400 hover:text-slate-600"
                                 disabled={uploading}
                             >
                                 <X className="h-4 w-4" />
@@ -127,13 +127,13 @@ export function UploadDialog({ open, onOpenChange, onUploadSuccess }: UploadDial
 
                     {/* Success State */}
                     {success && (
-                        <div className="flex items-center gap-3 p-4 bg-green-900/20 border border-green-700 rounded-lg">
-                            <CheckCircle className="h-6 w-6 text-green-400" />
+                        <div className="flex items-center gap-3 p-4 bg-emerald-50 border border-emerald-200 rounded-lg">
+                            <CheckCircle className="h-6 w-6 text-emerald-600" />
                             <div>
-                                <p className="text-sm font-medium text-green-400">
+                                <p className="text-sm font-medium text-emerald-700">
                                     Upload successful!
                                 </p>
-                                <p className="text-xs text-neutral-400">
+                                <p className="text-xs text-slate-500">
                                     Your document is being processed...
                                 </p>
                             </div>
@@ -142,9 +142,9 @@ export function UploadDialog({ open, onOpenChange, onUploadSuccess }: UploadDial
 
                     {/* Error Message */}
                     {error && (
-                        <div className="flex items-center gap-3 p-3 bg-red-900/20 border border-red-700 rounded-lg">
-                            <AlertCircle className="h-5 w-5 text-red-400" />
-                            <p className="text-sm text-red-400">{error}</p>
+                        <div className="flex items-center gap-3 p-3 bg-rose-50 border border-rose-200 rounded-lg">
+                            <AlertCircle className="h-5 w-5 text-rose-500" />
+                            <p className="text-sm text-rose-600">{error}</p>
                         </div>
                     )}
 
@@ -155,14 +155,14 @@ export function UploadDialog({ open, onOpenChange, onUploadSuccess }: UploadDial
                                 variant="ghost"
                                 onClick={handleClose}
                                 disabled={uploading}
-                                className="text-neutral-400"
+                                className="text-slate-500 hover:text-slate-700 hover:bg-slate-100"
                             >
                                 Cancel
                             </Button>
                             <Button
                                 onClick={handleUpload}
                                 disabled={uploading}
-                                className="bg-violet-600 hover:bg-violet-500"
+                                className="bg-emerald-500 hover:bg-emerald-600"
                             >
                                 {uploading ? "Uploading..." : "Upload"}
                             </Button>

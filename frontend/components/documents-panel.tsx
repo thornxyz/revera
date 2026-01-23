@@ -5,6 +5,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
 import { Trash2 } from "lucide-react";
 import { listDocuments, uploadDocument, deleteDocument, Document } from "@/lib/api";
 
@@ -19,6 +27,8 @@ export function DocumentsPanel({ onDocumentSelect }: DocumentsPanelProps) {
     const [isUploading, setIsUploading] = useState(false);
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [confirmOpen, setConfirmOpen] = useState(false);
+    const [pendingDelete, setPendingDelete] = useState<Document | null>(null);
 
     useEffect(() => {
         fetchDocuments();
@@ -54,17 +64,22 @@ export function DocumentsPanel({ onDocumentSelect }: DocumentsPanelProps) {
         }
     };
 
-    const handleDelete = async (e: React.MouseEvent, id: string) => {
+    const requestDelete = (e: React.MouseEvent, doc: Document) => {
         e.stopPropagation(); // Don't trigger selection
-        if (!confirm("Are you sure you want to delete this document?")) return;
+        setPendingDelete(doc);
+        setConfirmOpen(true);
+    };
 
-        setDeletingId(id);
+    const handleDelete = async () => {
+        if (!pendingDelete) return;
+
+        setDeletingId(pendingDelete.id);
         try {
-            await deleteDocument(id);
-            setDocuments((prev) => prev.filter((d) => d.id !== id));
-            if (selectedIds.has(id)) {
+            await deleteDocument(pendingDelete.id);
+            setDocuments((prev) => prev.filter((d) => d.id !== pendingDelete.id));
+            if (selectedIds.has(pendingDelete.id)) {
                 const newSelected = new Set(selectedIds);
-                newSelected.delete(id);
+                newSelected.delete(pendingDelete.id);
                 setSelectedIds(newSelected);
                 onDocumentSelect?.(Array.from(newSelected));
             }
@@ -72,7 +87,14 @@ export function DocumentsPanel({ onDocumentSelect }: DocumentsPanelProps) {
             setError("Failed to delete document");
         } finally {
             setDeletingId(null);
+            setConfirmOpen(false);
+            setPendingDelete(null);
         }
+    };
+
+    const closeConfirm = () => {
+        setConfirmOpen(false);
+        setPendingDelete(null);
     };
 
     const toggleSelect = (id: string) => {
@@ -88,8 +110,8 @@ export function DocumentsPanel({ onDocumentSelect }: DocumentsPanelProps) {
 
     return (
         <div className="h-full flex flex-col">
-            <div className="p-4 border-b border-neutral-800">
-                <h3 className="text-sm font-medium mb-3">Documents</h3>
+            <div className="p-4 border-b border-slate-200">
+                <h3 className="text-sm font-medium mb-3 text-slate-700">Documents</h3>
                 <label className="block">
                     <Input
                         type="file"
@@ -102,29 +124,29 @@ export function DocumentsPanel({ onDocumentSelect }: DocumentsPanelProps) {
                     <Button
                         variant="outline"
                         size="sm"
-                        className="w-full"
+                        className="w-full border-slate-200 text-slate-600 hover:text-slate-700 hover:border-slate-300"
                         disabled={isUploading}
                         onClick={() => document.getElementById("file-upload")?.click()}
                     >
                         {isUploading ? "Uploading..." : "Upload PDF"}
                     </Button>
                 </label>
-                {error && <p className="text-xs text-red-400 mt-2">{error}</p>}
+                {error && <p className="text-xs text-rose-600 mt-2">{error}</p>}
             </div>
 
             <ScrollArea className="flex-1">
                 <div className="p-4 space-y-2">
                     {isLoading ? (
-                        <p className="text-sm text-neutral-500">Loading...</p>
+                        <p className="text-sm text-slate-500">Loading...</p>
                     ) : documents.length === 0 ? (
-                        <p className="text-sm text-neutral-500">No documents uploaded</p>
+                        <p className="text-sm text-slate-500">No documents uploaded</p>
                     ) : (
                         documents.map((doc) => (
                             <Card
                                 key={doc.id}
                                 className={`group cursor-pointer transition-all ${selectedIds.has(doc.id)
-                                    ? "bg-violet-900/30 border-violet-700"
-                                    : "bg-neutral-900/50 border-neutral-800 hover:border-neutral-700"
+                                    ? "bg-emerald-50 border-emerald-200"
+                                    : "bg-white/80 border-slate-200 hover:border-slate-300"
                                     }`}
                                 onClick={() => toggleSelect(doc.id)}
                             >
@@ -135,7 +157,7 @@ export function DocumentsPanel({ onDocumentSelect }: DocumentsPanelProps) {
                                             <p className="text-sm font-medium truncate" title={doc.filename}>
                                                 {doc.filename}
                                             </p>
-                                            <p className="text-xs text-neutral-500">
+                                            <p className="text-xs text-slate-500">
                                                 {new Date(doc.created_at).toLocaleDateString()}
                                             </p>
                                         </div>
@@ -143,14 +165,14 @@ export function DocumentsPanel({ onDocumentSelect }: DocumentsPanelProps) {
                                             <Button
                                                 variant="ghost"
                                                 size="icon"
-                                                className="h-8 w-8 text-neutral-500 hover:text-red-400 hover:bg-neutral-800"
-                                                onClick={(e) => handleDelete(e, doc.id)}
+                                                className="h-8 w-8 text-slate-400 hover:text-rose-500 hover:bg-rose-50"
+                                                onClick={(e) => requestDelete(e, doc)}
                                                 disabled={deletingId === doc.id}
                                             >
                                                 <Trash2 className="h-4 w-4" />
                                             </Button>
                                             {selectedIds.has(doc.id) && (
-                                                <span className="text-violet-400 mr-1">✓</span>
+                                                <span className="text-emerald-600 mr-1">✓</span>
                                             )}
                                         </div>
                                     </div>
@@ -162,12 +184,40 @@ export function DocumentsPanel({ onDocumentSelect }: DocumentsPanelProps) {
             </ScrollArea>
 
             {selectedIds.size > 0 && (
-                <div className="p-4 border-t border-neutral-800">
-                    <p className="text-xs text-neutral-400">
+                <div className="p-4 border-t border-slate-200">
+                    <p className="text-xs text-slate-500">
                         {selectedIds.size} document{selectedIds.size > 1 ? "s" : ""} selected
                     </p>
                 </div>
             )}
+
+            <Dialog open={confirmOpen} onOpenChange={(open) => !open && closeConfirm()}>
+                <DialogContent className="bg-white border-slate-200 text-slate-900">
+                    <DialogHeader>
+                        <DialogTitle>Delete document?</DialogTitle>
+                        <DialogDescription className="text-slate-500">
+                            This removes the document from your workspace. This action cannot be undone.
+                        </DialogDescription>
+                    </DialogHeader>
+                    {pendingDelete && (
+                        <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                            {pendingDelete.filename}
+                        </div>
+                    )}
+                    <DialogFooter className="gap-2 sm:gap-0">
+                        <Button variant="outline" onClick={closeConfirm} className="border-slate-200 text-slate-600">
+                            Cancel
+                        </Button>
+                        <Button
+                            variant="destructive"
+                            onClick={handleDelete}
+                            disabled={deletingId === pendingDelete?.id}
+                        >
+                            {deletingId === pendingDelete?.id ? "Deleting..." : "Delete"}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

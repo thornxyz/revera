@@ -18,10 +18,10 @@ const agentIcons: Record<string, string> = {
 };
 
 const agentColors: Record<string, string> = {
-    planner: "border-l-violet-500",
-    retrieval: "border-l-blue-500",
-    web_search: "border-l-cyan-500",
-    synthesis: "border-l-green-500",
+    planner: "border-l-emerald-500",
+    retrieval: "border-l-sky-500",
+    web_search: "border-l-teal-500",
+    synthesis: "border-l-lime-500",
     critic: "border-l-amber-500",
 };
 
@@ -52,7 +52,7 @@ export function AgentTimelinePanel({ sessionId }: AgentTimelinePanelProps) {
 
     if (!sessionId) {
         return (
-            <div className="h-full flex items-center justify-center text-neutral-500 text-sm">
+            <div className="h-full flex items-center justify-center text-slate-500 text-sm">
                 Run a query to see agent activity
             </div>
         );
@@ -61,14 +61,14 @@ export function AgentTimelinePanel({ sessionId }: AgentTimelinePanelProps) {
     if (isLoading) {
         return (
             <div className="h-full flex items-center justify-center">
-                <div className="animate-pulse text-neutral-500">Loading timeline...</div>
+                <div className="animate-pulse text-slate-500">Loading timeline...</div>
             </div>
         );
     }
 
     if (!timeline?.timeline.length) {
         return (
-            <div className="h-full flex items-center justify-center text-neutral-500 text-sm">
+            <div className="h-full flex items-center justify-center text-slate-500 text-sm">
                 No agent activity recorded
             </div>
         );
@@ -82,7 +82,7 @@ export function AgentTimelinePanel({ sessionId }: AgentTimelinePanelProps) {
     return (
         <ScrollArea className="h-full">
             <div className="p-4 space-y-3">
-                <div className="flex items-center justify-between text-xs text-neutral-400 mb-4">
+                <div className="flex items-center justify-between text-xs text-slate-500 mb-4">
                     <span>Agent Execution Timeline</span>
                     <span>Total: {totalLatency}ms</span>
                 </div>
@@ -90,7 +90,7 @@ export function AgentTimelinePanel({ sessionId }: AgentTimelinePanelProps) {
                 {timeline.timeline.map((step, index) => (
                     <Card
                         key={index}
-                        className={`bg-neutral-900/50 border-neutral-800 border-l-4 ${agentColors[step.agent] || "border-l-neutral-500"
+                        className={`bg-white/85 border-slate-200 border-l-4 ${agentColors[step.agent] || "border-l-slate-300"
                             }`}
                     >
                         <CardHeader className="py-2 px-3">
@@ -103,17 +103,17 @@ export function AgentTimelinePanel({ sessionId }: AgentTimelinePanelProps) {
                                         {step.agent.replace("_", " ")}
                                     </CardTitle>
                                 </div>
-                                <span className="text-xs text-neutral-500">
+                                <span className="text-xs text-slate-500">
                                     {step.latency_ms}ms
                                 </span>
                             </div>
                         </CardHeader>
                         <CardContent className="py-2 px-3">
                             <details className="text-xs">
-                                <summary className="cursor-pointer text-neutral-400 hover:text-neutral-200">
+                                <summary className="cursor-pointer text-slate-500 hover:text-slate-700">
                                     View details
                                 </summary>
-                                <pre className="mt-2 p-2 bg-neutral-950 rounded overflow-x-auto text-neutral-300">
+                                <pre className="mt-2 p-2 bg-slate-50 rounded overflow-x-auto text-slate-600 border border-slate-200">
                                     {JSON.stringify(step.events, null, 2).slice(0, 500)}
                                 </pre>
                             </details>
@@ -122,22 +122,22 @@ export function AgentTimelinePanel({ sessionId }: AgentTimelinePanelProps) {
                 ))}
 
                 {/* Latency visualization */}
-                <div className="mt-4 pt-4 border-t border-neutral-800">
-                    <div className="text-xs text-neutral-400 mb-2">Latency Breakdown</div>
+                <div className="mt-4 pt-4 border-t border-slate-200">
+                    <div className="text-xs text-slate-500 mb-2">Latency Breakdown</div>
                     <div className="flex h-4 rounded overflow-hidden">
                         {timeline.timeline.map((step, index) => {
                             const width = (step.latency_ms / totalLatency) * 100;
                             const colors: Record<string, string> = {
-                                planner: "bg-violet-500",
-                                retrieval: "bg-blue-500",
-                                web_search: "bg-cyan-500",
-                                synthesis: "bg-green-500",
+                                planner: "bg-emerald-500",
+                                retrieval: "bg-sky-500",
+                                web_search: "bg-teal-500",
+                                synthesis: "bg-lime-500",
                                 critic: "bg-amber-500",
                             };
                             return (
                                 <div
                                     key={index}
-                                    className={`${colors[step.agent] || "bg-neutral-500"}`}
+                                    className={`${colors[step.agent] || "bg-slate-400"}`}
                                     style={{ width: `${width}%` }}
                                     title={`${step.agent}: ${step.latency_ms}ms`}
                                 />
@@ -149,15 +149,15 @@ export function AgentTimelinePanel({ sessionId }: AgentTimelinePanelProps) {
                             <div key={index} className="flex items-center gap-1 text-xs">
                                 <div
                                     className={`w-2 h-2 rounded-full ${{
-                                            planner: "bg-violet-500",
-                                            retrieval: "bg-blue-500",
-                                            web_search: "bg-cyan-500",
-                                            synthesis: "bg-green-500",
+                                            planner: "bg-emerald-500",
+                                            retrieval: "bg-sky-500",
+                                            web_search: "bg-teal-500",
+                                            synthesis: "bg-lime-500",
                                             critic: "bg-amber-500",
-                                        }[step.agent] || "bg-neutral-500"
+                                        }[step.agent] || "bg-slate-400"
                                         }`}
                                 />
-                                <span className="text-neutral-400 capitalize">
+                                <span className="text-slate-500 capitalize">
                                     {step.agent.replace("_", " ")}
                                 </span>
                             </div>
