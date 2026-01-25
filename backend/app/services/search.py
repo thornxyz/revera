@@ -3,7 +3,7 @@
 from uuid import UUID
 from dataclasses import dataclass
 
-from fastembed import TextEmbedding, SparseTextEmbedding, LateInteractionTextEmbedding
+from fastembed import SparseTextEmbedding, LateInteractionTextEmbedding
 from qdrant_client import models
 
 from app.core.qdrant import get_qdrant_service
@@ -35,9 +35,13 @@ class HybridSearchService:
 
         # Initialize Local Models for Query Embedding
         self.colbert_model = LateInteractionTextEmbedding(
-            model_name="colbert-ir/colbertv2.0"
+            model_name="colbert-ir/colbertv2.0",
+            cache_dir="./models_cache",
         )
-        self.sparse_model = SparseTextEmbedding(model_name="Qdrant/bm25")
+        self.sparse_model = SparseTextEmbedding(
+            model_name="Qdrant/bm25",
+            cache_dir="./models_cache",
+        )
 
     async def search(
         self,
@@ -69,7 +73,7 @@ class HybridSearchService:
         )
 
         # 2. Build Filter
-        must_conditions = [
+        must_conditions: list[models.Condition] = [
             models.FieldCondition(
                 key="user_id", match=models.MatchValue(value=str(user_id))
             )

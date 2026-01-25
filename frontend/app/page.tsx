@@ -51,7 +51,7 @@ export default function ResearchPage() {
     if (!query.trim()) return;
 
     setIsLoading(true);
-      setError(null);
+    setError(null);
 
     try {
       const response = await research(
@@ -100,6 +100,26 @@ export default function ResearchPage() {
       e.preventDefault();
       handleSubmit();
     }
+  };
+
+  const renderAnswerWithSources = (answer: string) => {
+    const citationPattern =
+      /\[(?:source\s*\d+(?:\s*,\s*source\s*\d+)*)\]/gi;
+    const parts = answer.split(new RegExp(`(${citationPattern.source})`, "gi"));
+    return parts.map((part, index) => {
+      if (citationPattern.test(part)) {
+        return (
+          <sup
+            key={`source-${index}`}
+            className="ml-0.5 text-emerald-600 font-medium"
+          >
+            {part}
+          </sup>
+        );
+      }
+
+      return <span key={`text-${index}`}>{part}</span>;
+    });
   };
 
   return (
@@ -244,7 +264,7 @@ export default function ResearchPage() {
                   <CardContent>
                     <div className="prose prose-slate prose-sm max-w-none">
                       <p className="whitespace-pre-wrap leading-relaxed text-slate-700">
-                        {result.answer}
+                        {renderAnswerWithSources(result.answer)}
                       </p>
                     </div>
                   </CardContent>

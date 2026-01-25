@@ -31,7 +31,7 @@ class GeminiClient:
         """Generate embeddings for multiple texts."""
         result = self.client.models.embed_content(
             model=self.embedding_model,
-            contents=texts,
+            contents=[types.Content(parts=[types.Part(text=text)]) for text in texts],
         )
         if result.embeddings is None:
             return []
@@ -65,12 +65,16 @@ class GeminiClient:
         prompt: str,
         system_instruction: str | None = None,
         temperature: float = 0.3,
+        max_tokens: int | None = None,
     ) -> str:
         """Generate structured JSON response."""
         config = types.GenerateContentConfig(
             temperature=temperature,
             response_mime_type="application/json",
         )
+
+        if max_tokens is not None:
+            config.max_output_tokens = max_tokens
 
         if system_instruction:
             config.system_instruction = system_instruction

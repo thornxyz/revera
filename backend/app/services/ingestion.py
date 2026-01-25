@@ -5,8 +5,10 @@ import uuid
 from typing import Any, cast
 from uuid import UUID
 
-import fitz  # PyMuPDF
-from fastembed import TextEmbedding, SparseTextEmbedding, LateInteractionTextEmbedding
+import pymupdf
+import pymupdf.layout
+import pymupdf4llm
+from fastembed import SparseTextEmbedding, LateInteractionTextEmbedding
 from qdrant_client import models
 
 from app.core.config import get_settings
@@ -29,10 +31,14 @@ class IngestionService:
         # Initialize Local Models
         # Late Interaction (ColBERT)
         self.colbert_model = LateInteractionTextEmbedding(
-            model_name="colbert-ir/colbertv2.0"
+            model_name="colbert-ir/colbertv2.0",
+            cache_dir="./models_cache",
         )
         # Sparse (BM25)
-        self.sparse_model = SparseTextEmbedding(model_name="Qdrant/bm25")
+        self.sparse_model = SparseTextEmbedding(
+            model_name="Qdrant/bm25",
+            cache_dir="./models_cache",
+        )
 
     async def ingest_pdf(
         self,
@@ -159,22 +165,32 @@ class IngestionService:
         return UUID(hex=document_id)
 
     def _extract_pdf_text(self, file_content: bytes) -> list[dict]:
-        """Extract text from PDF with page numbers."""
-        pdf_doc = fitz.open(stream=io.BytesIO(file_content), filetype="pdf")
-        pages = []
+        """Extract markdown text from PDF with page numbers."""
+        pdf_doc = pymupdf.open(stream=io.BytesIO(file_content), filetype="pdf")
+        try:
+            page_chunks = pymupdf4llm.to_markdown(
+                pdf_doc,
+                page_chunks=True,
+                use_ocr=False,
+            )
+        finally:
+            pdf_doc.close()
 
-        for page_num in range(len(pdf_doc)):
-            page = pdf_doc[page_num]
-            text: str = str(page.get_text() or "")
-            if text.strip():
+        pages = []
+        if isinstance(page_chunks, list):
+            for index, page_chunk in enumerate(page_chunks):
+                text = str(page_chunk.get("text", ""))
+                if not text.strip():
+                    continue
+                metadata = page_chunk.get("metadata", {})
+                page_number = int(metadata.get("page_number", index + 1))
                 pages.append(
                     {
-                        "page": page_num + 1,
+                        "page": page_number,
                         "text": text,
                     }
                 )
 
-        pdf_doc.close()
         return pages
 
     def _chunk_text(self, pages: list[dict]) -> list[dict]:

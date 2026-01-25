@@ -126,6 +126,7 @@ GEMINI_API_KEY=your-gemini-key
 TAVILY_API_KEY=your-tavily-key
 QDRANT_URL=https://your-cluster.qdrant.tech
 QDRANT_API_KEY=your-qdrant-key
+QDRANT_UPSERT_BATCH_SIZE=50
 ```
 
 **Frontend** (`.env.local`):

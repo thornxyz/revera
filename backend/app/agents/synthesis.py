@@ -1,5 +1,6 @@
 """Synthesis Agent - Produces grounded answers from context."""
 
+import re
 import time
 
 from app.agents.base import BaseAgent, AgentInput, AgentOutput
@@ -12,9 +13,11 @@ Rules:
 1. ONLY use information from the provided context
 2. Cite sources inline using [Source N] format where N is the source number
 3. If information is not in the context, say "I could not find information about X"
-4. Structure your response with clear sections if appropriate
-5. Be concise but comprehensive
-6. Never make up information
+4. Default to a moderately detailed, research-style response with multiple paragraphs
+5. Include background/context, key points, and implications or limitations when possible
+6. Use labeled sections or clear paragraph breaks when it helps readability
+7. If the question explicitly asks for a brief/summary response, keep it concise
+8. Never make up information
 
 Output format:
 {
@@ -28,6 +31,20 @@ Output format:
 """
 
 
+CONCISE_QUERY_PATTERNS = (
+    r"\bbrief\b",
+    r"\bbriefly\b",
+    r"\bshort answer\b",
+    r"\bsummary\b",
+    r"\bsummarize\b",
+    r"\btl;?dr\b",
+    r"\bconcise\b",
+    r"\bone paragraph\b",
+    r"\bfew sentences\b",
+    r"\bquick answer\b",
+)
+
+
 class SynthesisAgent(BaseAgent):
     """Agent that synthesizes context into a grounded answer."""
 
@@ -36,9 +53,27 @@ class SynthesisAgent(BaseAgent):
     def __init__(self):
         self.gemini = get_gemini_client()
 
+    @staticmethod
+    def _should_be_concise(query: str) -> bool:
+        normalized = query.strip().lower()
+        return any(re.search(pattern, normalized) for pattern in CONCISE_QUERY_PATTERNS)
+
     async def run(self, input: AgentInput) -> AgentOutput:
         """Synthesize an answer from the provided context."""
         start_time = time.perf_counter()
+
+        concise = self._should_be_concise(input.query)
+        if concise:
+            detail_guidance = (
+                "The user requested a brief response. Keep it tight (around 4-6 sentences), "
+                "focus on the key facts, and still include citations."
+            )
+        else:
+            detail_guidance = (
+                "Provide a research-style response with context, key points, and implications or "
+                "limitations. Aim for multiple paragraphs or labeled sections while staying grounded "
+                "in the sources."
+            )
 
         # Get context from previous agents
         internal_context = input.context.get("internal_sources", [])
@@ -80,6 +115,8 @@ class SynthesisAgent(BaseAgent):
 
 Question: {input.query}
 
+Response detail guidance: {detail_guidance}
+
 Context:
 {context_text}
 
@@ -90,6 +127,7 @@ Produce a well-cited answer in JSON format."""
             prompt=prompt,
             system_instruction=SYNTHESIS_SYSTEM_PROMPT,
             temperature=0.5,
+            max_tokens=3072,
         )
 
         # Parse response
