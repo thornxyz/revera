@@ -1,6 +1,8 @@
 """Web Search Agent - Fetches information from the web using Tavily."""
 
 import time
+import json
+import logging
 from dataclasses import dataclass
 
 from tavily import AsyncTavilyClient
@@ -8,6 +10,8 @@ from tavily import AsyncTavilyClient
 from app.agents.base import BaseAgent, AgentInput, AgentOutput
 from app.core.config import get_settings
 from app.llm.gemini import get_gemini_client
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -157,7 +161,7 @@ class WebSearchAgent(BaseAgent):
         )
 
     async def _expand_query(self, query: str) -> dict:
-        """Expand query into multiple search variations."""
+        """Expand query into multiple search variations with robust error handling."""
         prompt = QUERY_EXPANSION_PROMPT.format(query=query)
         try:
             response = self.gemini.generate_json(
@@ -165,15 +169,35 @@ class WebSearchAgent(BaseAgent):
                 temperature=0.4,
             )
             expansion = self._parse_json_response(response)
-            # Ensure we have valid structure
-            if "primary_query" not in expansion:
+
+            # Ensure we have valid structure with validation
+            if "primary_query" not in expansion or not expansion["primary_query"]:
+                logger.warning(f"[{self.name}] Missing primary_query, using original")
                 expansion["primary_query"] = query
-            if "alternative_queries" not in expansion:
+
+            if "alternative_queries" not in expansion or not isinstance(
+                expansion["alternative_queries"], list
+            ):
                 expansion["alternative_queries"] = []
-            if "query_type" not in expansion:
+
+            if "query_type" not in expansion or not expansion["query_type"]:
                 expansion["query_type"] = "factual"
+
             return expansion
+
+        except json.JSONDecodeError as e:
+            logger.error(
+                f"[{self.name}] Failed to parse query expansion: {e}\n"
+                "Falling back to original query"
+            )
+            # Fallback to original query
+            return {
+                "primary_query": query,
+                "alternative_queries": [],
+                "query_type": "factual",
+            }
         except Exception as e:
+            logger.error(f"[{self.name}] Unexpected error in query expansion: {e}")
             # Fallback to original query
             return {
                 "primary_query": query,

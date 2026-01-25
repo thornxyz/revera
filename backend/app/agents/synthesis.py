@@ -2,9 +2,13 @@
 
 import re
 import time
+import json
+import logging
 
 from app.agents.base import BaseAgent, AgentInput, AgentOutput
 from app.llm.gemini import get_gemini_client
+
+logger = logging.getLogger(__name__)
 
 
 SYNTHESIS_SYSTEM_PROMPT = """You are a research synthesis agent. Your job is to produce accurate, well-cited answers based on provided context.
@@ -130,8 +134,49 @@ Produce a well-cited answer in JSON format."""
             max_tokens=3072,
         )
 
-        # Parse response
-        result = self._parse_json_response(response)
+        # Parse response with error handling
+        try:
+            result = self._parse_json_response(response)
+
+            # Validate required fields exist
+            if "answer" not in result:
+                logger.warning(
+                    f"[{self.name}] Missing 'answer' field in response, using default"
+                )
+                result["answer"] = (
+                    "I encountered an issue generating a complete answer. Please try again."
+                )
+
+            if "sources_used" not in result:
+                result["sources_used"] = []
+
+            if "confidence" not in result:
+                result["confidence"] = "low"
+
+            if "sections" not in result:
+                result["sections"] = []
+
+        except json.JSONDecodeError as e:
+            logger.error(
+                f"[{self.name}] Failed to parse synthesis response: {e}\n"
+                f"Response length: {len(response)}\n"
+                f"Response preview: {response[:500]}"
+            )
+
+            # Return a safe default response that matches expected schema
+            result = {
+                "answer": (
+                    "I apologize, but I encountered a technical issue while synthesizing the information "
+                    "from the sources. This is likely due to the complexity or size of the content. "
+                    "Please try rephrasing your question or breaking it into smaller parts."
+                ),
+                "sources_used": [],
+                "confidence": "low",
+                "sections": [],
+                "error": "json_parse_error",
+                "raw_response_preview": response[:500] if response else "No response",
+            }
+
         result["source_map"] = source_map
 
         latency = int((time.perf_counter() - start_time) * 1000)

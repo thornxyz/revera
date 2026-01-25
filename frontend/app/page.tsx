@@ -77,7 +77,13 @@ export default function ResearchPage() {
       if (session.result) {
         const resolvedQuery = session.result.query?.trim() || session.query;
         const normalizedSources = session.result.sources ?? [];
-        setResult({ ...session.result, query: resolvedQuery, sources: normalizedSources });
+        const normalizedAnswer = session.result.answer || "";
+        setResult({ 
+          ...session.result, 
+          query: resolvedQuery, 
+          sources: normalizedSources,
+          answer: normalizedAnswer
+        });
       }
       setCurrentSessionId(sessionId);
       // Don't set query, as we want to start fresh or just view result
@@ -102,18 +108,39 @@ export default function ResearchPage() {
     }
   };
 
-  const renderAnswerWithSources = (answer: string) => {
+  const renderAnswerWithSources = (answer: string | undefined) => {
+    // Defensive check for undefined or null answer
+    if (!answer || typeof answer !== 'string') {
+      return <span className="text-slate-500 italic">No answer available</span>;
+    }
+    
+    // Pattern to match citations like [Source 1], [Source 1, 2], [Source 1, 4, 5], etc.
     const citationPattern =
-      /\[(?:source\s*\d+(?:\s*,\s*source\s*\d+)*)\]/gi;
+      /\[(?:source\s*\d+(?:\s*,\s*(?:source\s*)?\d+)*)\]/gi;
     const parts = answer.split(new RegExp(`(${citationPattern.source})`, "gi"));
+    
     return parts.map((part, index) => {
       if (citationPattern.test(part)) {
+        // Extract all source numbers from the citation
+        // Handles formats like [Source 1], [Source 1, 2], [Source 1, 4, 5]
+        const sourceNumbers = part
+          .replace(/[\[\]]/g, '') // Remove brackets
+          .split(',')
+          .map(s => {
+            // Extract just the number, handling "Source 1" or just "1"
+            const match = s.trim().match(/\d+/);
+            return match ? parseInt(match[0]) : null;
+          })
+          .filter((n): n is number => n !== null);
+
         return (
           <sup
             key={`source-${index}`}
-            className="ml-0.5 text-emerald-600 font-medium"
+            className="ml-0.5 text-emerald-600 font-medium cursor-pointer hover:text-emerald-700"
+            onClick={() => setShowSources(true)}
+            title={`View source${sourceNumbers.length > 1 ? 's' : ''}: ${sourceNumbers.join(', ')}`}
           >
-            {part}
+            [{sourceNumbers.join(',')}]
           </sup>
         );
       }

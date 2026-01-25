@@ -1,5 +1,6 @@
 """Documents API routes."""
 
+import logging
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from uuid import UUID
@@ -9,6 +10,7 @@ from app.core.auth import get_current_user_id
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class DocumentResponse(BaseModel):
@@ -50,11 +52,20 @@ async def upload_document(
 
     # Read file content
     content = await file.read()
+    content_len = len(content)
 
-    if len(content) > 50 * 1024 * 1024:  # 50MB limit
+    if content_len > 50 * 1024 * 1024:  # 50MB limit
         raise HTTPException(status_code=400, detail="File too large (max 50MB)")
 
     try:
+        logger.info(
+            "[DOC_UPLOAD] Starting ingest",
+            extra={
+                "doc_filename": file.filename,
+                "doc_user_id": user_id,
+                "doc_bytes": content_len,
+            },
+        )
         ingestion_service = get_ingestion_service()
         document_id = await ingestion_service.ingest_pdf(
             file_content=content,
@@ -80,6 +91,14 @@ async def upload_document(
             created_at=doc.data["created_at"],  # type: ignore
         )
     except Exception as e:
+        logger.exception(
+            "[DOC_UPLOAD] Failed to ingest document",
+            extra={
+                "doc_filename": file.filename,
+                "doc_user_id": user_id,
+                "doc_bytes": content_len,
+            },
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -110,7 +110,12 @@ export function UploadDialog({ open, onOpenChange, onUploadSuccess }: UploadDial
                         <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
                             <File className="h-8 w-8 text-emerald-500" />
                             <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium truncate">{file.name}</p>
+                                <p
+                                    className="text-sm font-medium break-all leading-snug text-slate-700"
+                                    title={file.name}
+                                >
+                                    {file.name}
+                                </p>
                                 <p className="text-xs text-slate-500">
                                     {(file.size / 1024 / 1024).toFixed(2)} MB
                                 </p>

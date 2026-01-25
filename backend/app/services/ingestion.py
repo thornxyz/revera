@@ -52,20 +52,31 @@ class IngestionService:
         Returns the document ID.
         """
         # 1. Create document record in Supabase (Metadata Source of Truth)
-        doc_result = (
-            self.supabase.table("documents")
-            .insert(
-                {
-                    "user_id": str(user_id),
-                    "filename": filename,
-                    "metadata": {"type": "pdf"},
-                }
+        try:
+            doc_result = (
+                self.supabase.table("documents")
+                .insert(
+                    {
+                        "user_id": str(user_id),
+                        "filename": filename,
+                        "metadata": {"type": "pdf"},
+                    }
+                )
+                .execute()
             )
-            .execute()
-        )
+        except Exception:
+            logger.exception(
+                "[INGEST] Failed to create document record",
+                extra={"filename": filename, "user_id": str(user_id)},
+            )
+            raise
 
         doc_data = cast(list[dict[str, Any]], doc_result.data or [])
         if not doc_data:
+            logger.error(
+                "[INGEST] No data returned after document insert",
+                extra={"filename": filename, "user_id": str(user_id)},
+            )
             raise ValueError("Failed to create document record")
 
         document_id = str(doc_data[0]["id"]) if "id" in doc_data[0] else ""

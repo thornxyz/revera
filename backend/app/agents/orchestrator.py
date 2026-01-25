@@ -1,16 +1,12 @@
-"""Orchestrator - Coordinates agent execution for research queries."""
+"""Orchestrator - Coordinates agent execution for research queries using LangGraph."""
 
 import logging
 import time
 from uuid import uuid4
 from dataclasses import dataclass
 
-from app.agents.base import AgentInput, AgentOutput
-from app.agents.planner import PlannerAgent, ExecutionPlan
-from app.agents.retrieval import RetrievalAgent
-from app.agents.web_search import WebSearchAgent
-from app.agents.synthesis import SynthesisAgent
-from app.agents.critic import CriticAgent
+from app.agents.graph_builder import compile_research_graph
+from app.agents.graph_state import ResearchState
 from app.core.database import get_supabase_client
 
 logger = logging.getLogger(__name__)
@@ -32,39 +28,45 @@ class ResearchResult:
 
 class Orchestrator:
     """
-    Central controller that orchestrates agent execution.
+    LangGraph-based orchestrator for multi-agent research workflow.
 
-    Flow:
-    1. Planner creates execution plan
-    2. Execute tools in order (RAG, Web, etc.)
-    3. Synthesis produces answer
-    4. Critic verifies
-    5. Log everything
+    New features compared to old implementation:
+    - Parallel execution of retrieval + web search
+    - Conditional routing based on execution plan
+    - Feedback loops for answer refinement
+    - Streaming support for real-time updates
+    - State-based architecture for better observability
     """
 
     def __init__(self, user_id: str):
         self.user_id = user_id
-        logger.info(f"[ORCH] Initializing orchestrator for user: {user_id}")
+        logger.info(f"[ORCH] Initializing LangGraph orchestrator for user: {user_id}")
         self.supabase = get_supabase_client()
 
-        # Initialize agents
-        logger.info("[ORCH] Initializing agents...")
-        self.planner = PlannerAgent()
-        self.retrieval = RetrievalAgent(user_id)
-        self.web_search = WebSearchAgent()
-        self.synthesis = SynthesisAgent()
-        self.critic = CriticAgent()
-        logger.info("[ORCH] Agents initialized")
+        # Compile the research graph once at initialization
+        self.graph = compile_research_graph()
+        logger.info("[ORCH] LangGraph workflow compiled and ready")
 
     async def research(
         self,
         query: str,
         use_web: bool = True,
         document_ids: list[str] | None = None,
+        max_iterations: int = 2,
     ) -> ResearchResult:
-        """Execute a complete research query."""
+        """
+        Execute a complete research query using the LangGraph workflow.
+
+        Args:
+            query: The research question
+            use_web: Whether to use web search
+            document_ids: Optional list of specific document IDs to search
+            max_iterations: Maximum refinement iterations (default: 2)
+
+        Returns:
+            ResearchResult with answer, sources, verification, and timeline
+        """
         start_time = time.perf_counter()
-        timeline = []
 
         # Create research session
         session_id = str(uuid4())
@@ -85,101 +87,70 @@ class Orchestrator:
             raise
 
         try:
-            # 1. Plan the execution
-            logger.info("[ORCH] Step 1: Planning...")
-            plan_input = AgentInput(
-                query=query,
-                constraints={"use_web": use_web},
-            )
-            plan_output = await self.planner.run(plan_input)
-            timeline.append(plan_output.to_dict())
-            self._log_agent(session_id, plan_output)
-            logger.info(f"[ORCH] Planning complete: {plan_output.latency_ms}ms")
+            # Initialize the graph state
+            initial_state: ResearchState = {
+                "query": query,
+                "user_id": self.user_id,
+                "session_id": session_id,
+                "use_web": use_web,
+                "document_ids": document_ids,
+                "execution_plan": None,
+                "internal_sources": [],
+                "web_sources": [],
+                "synthesis_result": None,
+                "verification": None,
+                "agent_timeline": [],
+                "iteration_count": 0,
+                "needs_refinement": False,
+                "max_iterations": max_iterations,
+            }
 
-            plan: ExecutionPlan = plan_output.result
+            logger.info("[ORCH] Invoking LangGraph workflow...")
 
-            # 2. Execute retrieval
-            logger.info("[ORCH] Step 2: Retrieval...")
-            internal_sources = []
-            retrieval_input = AgentInput(
-                query=query,
-                context={"document_ids": document_ids},
-                constraints=plan.constraints,
-            )
-            retrieval_output = await self.retrieval.run(retrieval_input)
-            timeline.append(retrieval_output.to_dict())
-            self._log_agent(session_id, retrieval_output)
-            internal_sources = retrieval_output.result
-            logger.info(
-                f"[ORCH] Retrieval complete: {len(internal_sources)} sources, {retrieval_output.latency_ms}ms"
-            )
+            # Execute the graph
+            final_state = await self.graph.ainvoke(initial_state)
 
-            # 3. Execute web search if planned
-            web_sources = []
-            if use_web and any(s.tool == "web" for s in plan.steps):
-                logger.info("[ORCH] Step 3: Web search...")
-                web_input = AgentInput(
-                    query=query,
-                    constraints=plan.constraints,
-                )
-                web_output = await self.web_search.run(web_input)
-                timeline.append(web_output.to_dict())
-                self._log_agent(session_id, web_output)
-                web_sources = web_output.result
-                logger.info(
-                    f"[ORCH] Web search complete: {len(web_sources)} sources, {web_output.latency_ms}ms"
-                )
-            else:
-                logger.info("[ORCH] Step 3: Skipping web search")
+            logger.info("[ORCH] LangGraph workflow completed")
 
-            # 4. Synthesize answer
-            logger.info("[ORCH] Step 4: Synthesis...")
-            synthesis_input = AgentInput(
-                query=query,
-                context={
-                    "internal_sources": internal_sources,
-                    "web_sources": web_sources,
-                },
-                constraints=plan.constraints,
-            )
-            synthesis_output = await self.synthesis.run(synthesis_input)
-            timeline.append(synthesis_output.to_dict())
-            self._log_agent(session_id, synthesis_output)
-            synthesis_result = synthesis_output.result
-            logger.info(f"[ORCH] Synthesis complete: {synthesis_output.latency_ms}ms")
+            # Extract results from final state
+            synthesis_result = final_state.get("synthesis_result", {})
+            verification = final_state.get("verification", {})
+            agent_timeline = final_state.get("agent_timeline", [])
+            internal_sources = final_state.get("internal_sources", [])
+            web_sources = final_state.get("web_sources", [])
 
-            # 5. Verify answer
-            logger.info("[ORCH] Step 5: Verification...")
-            critic_input = AgentInput(
-                query=query,
-                context={
-                    "synthesis_result": synthesis_result,
-                    "internal_sources": internal_sources,
-                    "web_sources": web_sources,
-                },
-            )
-            critic_output = await self.critic.run(critic_input)
-            timeline.append(critic_output.to_dict())
-            self._log_agent(session_id, critic_output)
-            verification = critic_output.result
-            logger.info(f"[ORCH] Verification complete: {critic_output.latency_ms}ms")
-
-            # Build final result
+            # Calculate total latency
             total_latency = int((time.perf_counter() - start_time) * 1000)
 
             # Combine all sources
             all_sources = self._normalize_sources(internal_sources, web_sources)
 
+            # Safely extract answer with fallback
+            answer = synthesis_result.get("answer", "")
+            if not answer or not isinstance(answer, str):
+                logger.warning(
+                    f"[ORCH] Invalid answer in synthesis_result: {type(answer)}. "
+                    "Using fallback message."
+                )
+                answer = (
+                    "I apologize, but I encountered an issue generating a response. "
+                    "Please try rephrasing your question or contact support if this persists."
+                )
+
+            # Build final result
             result = ResearchResult(
                 session_id=session_id,
                 query=query,
-                answer=synthesis_result.get("answer", ""),
+                answer=answer,
                 sources=all_sources,
                 verification=verification,
-                agent_timeline=timeline,
+                agent_timeline=agent_timeline,
                 total_latency_ms=total_latency,
                 confidence=verification.get("verification_status", "unknown"),
             )
+
+            # Log agent execution to database
+            self._log_agent_timeline(session_id, agent_timeline)
 
             # Update session status
             logger.info("[ORCH] Updating session status to completed...")
@@ -194,15 +165,18 @@ class Orchestrator:
                         "total_latency_ms": result.total_latency_ms,
                         "query": query,
                         "session_id": session_id,
+                        "iterations": final_state.get("iteration_count", 0),
                     },
                 }
             ).eq("id", session_id).execute()
 
-            logger.info(f"[ORCH] Research complete! Total: {total_latency}ms")
+            logger.info(
+                f"[ORCH] Research complete! Total: {total_latency}ms, Iterations: {final_state.get('iteration_count', 0)}"
+            )
             return result
 
         except Exception as e:
-            logger.error(f"[ORCH] Research failed: {e}")
+            logger.error(f"[ORCH] Research failed: {e}", exc_info=True)
             # Update session with error
             try:
                 self.supabase.table("research_sessions").update(
@@ -215,22 +189,87 @@ class Orchestrator:
                 logger.error(f"[ORCH] Failed to update session status: {db_err}")
             raise
 
-    def _log_agent(self, session_id: str, output: AgentOutput):
-        """Log agent execution to database."""
+    async def research_stream(
+        self,
+        query: str,
+        use_web: bool = True,
+        document_ids: list[str] | None = None,
+        max_iterations: int = 2,
+    ):
+        """
+        Execute research with streaming updates.
+
+        Yields state updates as each node completes.
+        This allows the frontend to show real-time progress.
+        """
+        session_id = str(uuid4())
+
         try:
-            self.supabase.table("agent_logs").insert(
+            self.supabase.table("research_sessions").insert(
                 {
-                    "session_id": session_id,
-                    "agent_name": output.agent_name,
-                    "events": {
-                        "result_summary": str(output.result)[:500],
-                        "metadata": output.metadata,
-                    },
-                    "latency_ms": output.latency_ms,
+                    "id": session_id,
+                    "user_id": self.user_id,
+                    "query": query,
+                    "status": "running",
                 }
             ).execute()
         except Exception as e:
-            logger.warning(f"[ORCH] Failed to log agent {output.agent_name}: {e}")
+            logger.error(f"[ORCH] Failed to create session: {e}")
+            raise
+
+        initial_state: ResearchState = {
+            "query": query,
+            "user_id": self.user_id,
+            "session_id": session_id,
+            "use_web": use_web,
+            "document_ids": document_ids,
+            "execution_plan": None,
+            "internal_sources": [],
+            "web_sources": [],
+            "synthesis_result": None,
+            "verification": None,
+            "agent_timeline": [],
+            "iteration_count": 0,
+            "needs_refinement": False,
+            "max_iterations": max_iterations,
+        }
+
+        # Stream graph execution
+        async for event in self.graph.astream(initial_state):
+            # Each event is a dict with node name as key
+            for node_name, node_output in event.items():
+                logger.info(f"[ORCH] Stream update from node: {node_name}")
+                yield {
+                    "type": "node_complete",
+                    "node": node_name,
+                    "data": node_output,
+                }
+
+        # Final update
+        yield {
+            "type": "complete",
+            "session_id": session_id,
+        }
+
+    def _log_agent_timeline(self, session_id: str, timeline: list[dict]):
+        """Log all agent executions to database."""
+        for entry in timeline:
+            try:
+                self.supabase.table("agent_logs").insert(
+                    {
+                        "session_id": session_id,
+                        "agent_name": entry.get("agent_name"),
+                        "events": {
+                            "result_summary": str(entry.get("result", ""))[:500],
+                            "metadata": entry.get("metadata", {}),
+                        },
+                        "latency_ms": entry.get("latency_ms", 0),
+                    }
+                ).execute()
+            except Exception as e:
+                logger.warning(
+                    f"[ORCH] Failed to log agent {entry.get('agent_name')}: {e}"
+                )
 
     @staticmethod
     def _normalize_sources(

@@ -1,9 +1,12 @@
 """Google Gemini client wrapper for embeddings and LLM inference."""
 
+import logging
 from google import genai
 from google.genai import types
 
 from app.core.config import get_settings, GEMINI_EMBEDDING_MODEL, GEMINI_MODEL
+
+logger = logging.getLogger(__name__)
 
 
 class GeminiClient:
@@ -29,24 +32,33 @@ class GeminiClient:
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for multiple texts."""
-        result = self.client.models.embed_content(
-            model=self.embedding_model,
-            contents=[types.Content(parts=[types.Part(text=text)]) for text in texts],
-        )
-        if result.embeddings is None:
-            return []
-        return [e.values for e in result.embeddings if e.values is not None]
+        embeddings: list[list[float]] = []
+        batch_size = 100  # Gemini API limit for BatchEmbedContents
+
+        for start in range(0, len(texts), batch_size):
+            batch = texts[start : start + batch_size]
+            result = self.client.models.embed_content(
+                model=self.embedding_model,
+                contents=[
+                    types.Content(parts=[types.Part(text=text)]) for text in batch
+                ],
+            )
+            if result.embeddings is None:
+                continue
+            embeddings.extend(
+                [e.values for e in result.embeddings if e.values is not None]
+            )
+
+        return embeddings
 
     def generate(
         self,
         prompt: str,
         system_instruction: str | None = None,
-        temperature: float = 0.7,
         max_tokens: int = 4096,
     ) -> str:
         """Generate text response from LLM."""
         config = types.GenerateContentConfig(
-            temperature=temperature,
             max_output_tokens=max_tokens,
         )
 
@@ -67,7 +79,18 @@ class GeminiClient:
         temperature: float = 0.3,
         max_tokens: int | None = None,
     ) -> str:
-        """Generate structured JSON response."""
+        """
+        Generate structured JSON response.
+
+        Args:
+            prompt: The user prompt
+            system_instruction: Optional system instruction
+            temperature: Sampling temperature (0.0-1.0)
+            max_tokens: Maximum output tokens
+
+        Returns:
+            Raw response text (should be valid JSON)
+        """
         config = types.GenerateContentConfig(
             temperature=temperature,
             response_mime_type="application/json",
@@ -79,12 +102,38 @@ class GeminiClient:
         if system_instruction:
             config.system_instruction = system_instruction
 
-        response = self.client.models.generate_content(
-            model=self.model,
-            contents=prompt,
-            config=config,
-        )
-        return response.text or ""
+        try:
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config=config,
+            )
+
+            response_text = response.text or ""
+
+            # Log response metadata for monitoring
+            response_length = len(response_text)
+            logger.debug(
+                f"[Gemini] JSON generation complete. "
+                f"Length: {response_length} chars, "
+                f"Temperature: {temperature}"
+            )
+
+            # Validate response is not empty
+            if not response_text.strip():
+                logger.warning("[Gemini] Received empty response from model")
+                return "{}"
+
+            # Log preview of response for debugging (only first 300 chars)
+            if logger.isEnabledFor(logging.DEBUG):
+                preview = response_text[:300] + ("..." if response_length > 300 else "")
+                logger.debug(f"[Gemini] Response preview: {preview}")
+
+            return response_text
+
+        except Exception as e:
+            logger.error(f"[Gemini] Error generating JSON response: {e}", exc_info=True)
+            raise
 
 
 # Singleton instance

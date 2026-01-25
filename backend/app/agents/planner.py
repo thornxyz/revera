@@ -1,10 +1,14 @@
 """Planner Agent - Decomposes user queries into execution plans."""
 
 import time
+import json
+import logging
 from dataclasses import dataclass
 
 from app.agents.base import BaseAgent, AgentInput, AgentOutput
 from app.llm.gemini import get_gemini_client
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -80,9 +84,9 @@ class PlannerAgent(BaseAgent):
 Query: {input.query}
 
 User preferences:
-- Use web search: {input.constraints.get('use_web', True)}
-- Require citations: {input.constraints.get('citations_required', True)}
-- Preferred sources: {input.constraints.get('preferred_sources', 'any')}
+- Use web search: {input.constraints.get("use_web", True)}
+- Require citations: {input.constraints.get("citations_required", True)}
+- Preferred sources: {input.constraints.get("preferred_sources", "any")}
 
 Output the plan as JSON."""
 
@@ -93,8 +97,61 @@ Output the plan as JSON."""
             temperature=0.3,
         )
 
-        # Parse the response
-        plan_dict = self._parse_json_response(response)
+        # Parse the response with error handling
+        try:
+            plan_dict = self._parse_json_response(response)
+
+            # Validate required fields
+            if "steps" not in plan_dict:
+                logger.warning(
+                    f"[{self.name}] Missing 'steps' field, creating default plan"
+                )
+                plan_dict["steps"] = [
+                    {
+                        "tool": "rag",
+                        "description": "Search internal documents",
+                        "parameters": {},
+                    },
+                    {
+                        "tool": "synthesis",
+                        "description": "Synthesize answer",
+                        "parameters": {},
+                    },
+                ]
+
+            if "subtasks" not in plan_dict:
+                plan_dict["subtasks"] = ["Answer the user query"]
+
+            if "constraints" not in plan_dict:
+                plan_dict["constraints"] = {}
+
+        except json.JSONDecodeError as e:
+            logger.error(
+                f"[{self.name}] Failed to parse planner response: {e}\n"
+                f"Response length: {len(response)}\n"
+                f"Response preview: {response[:500]}"
+            )
+
+            # Return a safe default plan
+            plan_dict = {
+                "subtasks": ["Answer the user query"],
+                "steps": [
+                    {
+                        "tool": "rag",
+                        "description": "Search internal documents",
+                        "parameters": {},
+                    },
+                    {
+                        "tool": "synthesis",
+                        "description": "Synthesize answer",
+                        "parameters": {},
+                    },
+                ],
+                "constraints": {
+                    "citations_required": True,
+                    "max_sources": 10,
+                },
+            }
 
         # Convert to structured plan
         plan = ExecutionPlan(

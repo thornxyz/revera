@@ -1,9 +1,13 @@
 """Critic Agent - Verifies claims against sources."""
 
 import time
+import json
+import logging
 
 from app.agents.base import BaseAgent, AgentInput, AgentOutput
 from app.llm.gemini import get_gemini_client
+
+logger = logging.getLogger(__name__)
 
 
 CRITIC_SYSTEM_PROMPT = """You are a research verification agent. Your job is to verify that claims in an answer are supported by the provided sources.
@@ -112,8 +116,55 @@ Output verification results in JSON format."""
             temperature=0.1,  # Lower for more consistent verification
         )
 
-        # Parse response
-        result = self._parse_json_response(response)
+        # Parse response with error handling
+        try:
+            result = self._parse_json_response(response)
+
+            # Validate required fields
+            if "verification_status" not in result:
+                logger.warning(
+                    f"[{self.name}] Missing verification_status, setting to 'partial'"
+                )
+                result["verification_status"] = "partial"
+
+            if "confidence_score" not in result:
+                result["confidence_score"] = 0.5
+
+            if "overall_assessment" not in result:
+                result["overall_assessment"] = (
+                    "Verification completed with limited information"
+                )
+
+        except json.JSONDecodeError as e:
+            logger.error(
+                f"[{self.name}] Failed to parse critic response: {e}\n"
+                f"Response length: {len(response)}\n"
+                f"Response preview: {response[:500]}"
+            )
+
+            # Return a safe default verification result
+            result = {
+                "verification_status": "unverified",
+                "confidence_score": 0.0,
+                "verified_claims": [],
+                "unsupported_claims": [],
+                "conflicting_information": [],
+                "source_quality": {
+                    "internal_sources": {
+                        "count": len(internal_sources),
+                        "reliability": "unknown",
+                    },
+                    "web_sources": {
+                        "count": len(web_sources),
+                        "reliability": "unknown",
+                        "recency": "unknown",
+                    },
+                },
+                "missing_citations": [],
+                "coverage_gaps": [],
+                "overall_assessment": "Unable to complete verification due to technical error",
+                "error": "json_parse_error",
+            }
 
         # Add metadata
         result["sources_breakdown"] = {
