@@ -197,11 +197,23 @@ class Orchestrator:
         max_iterations: int = 2,
     ):
         """
-        Execute research with streaming updates.
+        Execute research with streaming updates including answer tokens.
 
-        Yields state updates as each node completes.
-        This allows the frontend to show real-time progress.
+        Yields:
+        - agent_status events as each node starts/completes
+        - answer_chunk events with streaming synthesis text
+        - sources event with retrieved sources
+        - complete event with final session info
         """
+        import time
+        from app.agents.base import AgentInput
+        from app.agents.planner import PlannerAgent
+        from app.agents.retrieval import RetrievalAgent
+        from app.agents.web_search import WebSearchAgent
+        from app.agents.synthesis import SynthesisAgent
+        from app.agents.critic import CriticAgent
+
+        start_time = time.perf_counter()
         session_id = str(uuid4())
 
         try:
@@ -217,39 +229,171 @@ class Orchestrator:
             logger.error(f"[ORCH] Failed to create session: {e}")
             raise
 
-        initial_state: ResearchState = {
-            "query": query,
-            "user_id": self.user_id,
-            "session_id": session_id,
-            "use_web": use_web,
-            "document_ids": document_ids,
-            "execution_plan": None,
-            "internal_sources": [],
-            "web_sources": [],
-            "synthesis_result": None,
-            "verification": None,
-            "agent_timeline": [],
-            "iteration_count": 0,
-            "needs_refinement": False,
-            "max_iterations": max_iterations,
-        }
+        agent_timeline = []
+        internal_sources = []
+        web_sources = []
+        synthesis_result = None
+        verification = None
 
-        # Stream graph execution
-        async for event in self.graph.astream(initial_state):
-            # Each event is a dict with node name as key
-            for node_name, node_output in event.items():
-                logger.info(f"[ORCH] Stream update from node: {node_name}")
+        try:
+            # 1. Planning
+            yield {"type": "node_complete", "node": "planning", "status": "running"}
+            planner = PlannerAgent()
+            plan_input = AgentInput(query=query, constraints={"use_web": use_web})
+            plan_output = await planner.run(plan_input)
+            execution_plan = plan_output.result
+            agent_timeline.append(plan_output.to_dict())
+            yield {"type": "node_complete", "node": "planning", "status": "complete"}
+
+            # 2. Retrieval
+            yield {"type": "node_complete", "node": "retrieval", "status": "running"}
+            retrieval = RetrievalAgent(self.user_id)
+            retrieval_input = AgentInput(
+                query=query,
+                context={"document_ids": document_ids},
+                constraints=execution_plan.constraints if execution_plan else {},
+            )
+            retrieval_output = await retrieval.run(retrieval_input)
+            internal_sources = retrieval_output.result
+            agent_timeline.append(retrieval_output.to_dict())
+            yield {"type": "node_complete", "node": "retrieval", "status": "complete"}
+
+            # Yield sources immediately after retrieval
+            yield {"type": "sources", "sources": internal_sources}
+
+            # 3. Web Search (conditional)
+            should_web_search = use_web
+            if execution_plan and hasattr(execution_plan, "steps"):
+                should_web_search = use_web and any(
+                    step.tool == "web" for step in execution_plan.steps
+                )
+
+            if should_web_search:
                 yield {
                     "type": "node_complete",
-                    "node": node_name,
-                    "data": node_output,
+                    "node": "web_search",
+                    "status": "running",
                 }
+                web_search = WebSearchAgent()
+                web_input = AgentInput(
+                    query=query,
+                    constraints=execution_plan.constraints if execution_plan else {},
+                )
+                web_output = await web_search.run(web_input)
+                web_sources = web_output.result
+                agent_timeline.append(web_output.to_dict())
+                yield {
+                    "type": "node_complete",
+                    "node": "web_search",
+                    "status": "complete",
+                }
+                # Yield web sources
+                yield {"type": "sources", "sources": web_sources}
 
-        # Final update
-        yield {
-            "type": "complete",
-            "session_id": session_id,
-        }
+            # 4. Synthesis with streaming!
+            yield {"type": "node_complete", "node": "synthesis", "status": "running"}
+            synthesis = SynthesisAgent()
+            synthesis_input = AgentInput(
+                query=query,
+                context={
+                    "internal_sources": internal_sources,
+                    "web_sources": web_sources,
+                },
+                constraints=execution_plan.constraints if execution_plan else {},
+            )
+
+            # Stream the synthesis answer
+            async for chunk in synthesis.run_stream(synthesis_input):
+                if chunk.get("type") == "thought_chunk":
+                    yield {"type": "thought_chunk", "content": chunk.get("content", "")}
+                elif chunk.get("type") == "answer_chunk":
+                    yield {"type": "answer_chunk", "content": chunk.get("content", "")}
+                elif chunk.get("type") == "complete":
+                    synthesis_output = chunk.get("output")
+                    synthesis_result = (
+                        synthesis_output.result if synthesis_output else {}
+                    )
+                    if synthesis_output:
+                        agent_timeline.append(synthesis_output.to_dict())
+
+            yield {"type": "node_complete", "node": "synthesis", "status": "complete"}
+
+            # 5. Critic/Verification
+            yield {"type": "node_complete", "node": "critic", "status": "running"}
+            critic = CriticAgent()
+            critic_input = AgentInput(
+                query=query,
+                context={
+                    "synthesis_result": synthesis_result,
+                    "internal_sources": internal_sources,
+                    "web_sources": web_sources,
+                },
+            )
+            critic_output = await critic.run(critic_input)
+            verification = critic_output.result
+            agent_timeline.append(critic_output.to_dict())
+            yield {"type": "node_complete", "node": "critic", "status": "complete"}
+
+            # Calculate total latency
+            total_latency = int((time.perf_counter() - start_time) * 1000)
+
+            # Combine all sources
+            all_sources = self._normalize_sources(internal_sources, web_sources)
+
+            # Update session in database
+            self.supabase.table("research_sessions").update(
+                {
+                    "status": "completed",
+                    "result": {
+                        "answer": (
+                            synthesis_result.get("answer", "")
+                            if synthesis_result
+                            else ""
+                        ),
+                        "sources": all_sources,
+                        "verification": verification,
+                        "confidence": (
+                            verification.get("verification_status", "unknown")
+                            if verification
+                            else "unknown"
+                        ),
+                        "total_latency_ms": total_latency,
+                        "query": query,
+                        "session_id": session_id,
+                    },
+                }
+            ).eq("id", session_id).execute()
+
+            # Log agent timeline
+            self._log_agent_timeline(session_id, agent_timeline)
+
+            # Final complete event
+            yield {
+                "type": "complete",
+                "session_id": session_id,
+                "confidence": (
+                    verification.get("verification_status", "unknown")
+                    if verification
+                    else "unknown"
+                ),
+                "total_latency_ms": total_latency,
+                "sources": all_sources,
+                "verification": verification,
+            }
+
+        except Exception as e:
+            logger.error(f"[ORCH] Stream research failed: {e}", exc_info=True)
+            # Update session with error
+            try:
+                self.supabase.table("research_sessions").update(
+                    {
+                        "status": "failed",
+                        "result": {"error": str(e)},
+                    }
+                ).eq("id", session_id).execute()
+            except Exception as db_err:
+                logger.error(f"[ORCH] Failed to update session status: {db_err}")
+            yield {"type": "error", "message": str(e)}
 
     def _log_agent_timeline(self, session_id: str, timeline: list[dict]):
         """Log all agent executions to database."""

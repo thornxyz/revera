@@ -35,6 +35,22 @@ Output format:
 """
 
 
+SYNTHESIS_STREAMING_PROMPT = """You are a research synthesis agent. Your job is to produce accurate, well-cited answers based on provided context.
+
+Rules:
+1. ONLY use information from the provided context
+2. Cite sources inline using [Source N] format where N is the source number
+3. If information is not in the context, say "I could not find information about X"
+4. Default to a moderately detailed, research-style response with multiple paragraphs
+5. Include background/context, key points, and implications or limitations when possible
+6. Use markdown formatting: headers (##), bullet points, bold for emphasis, code blocks when appropriate
+7. If the question explicitly asks for a brief/summary response, keep it concise
+8. Never make up information
+
+Write a well-formatted markdown response with inline citations. Do NOT wrap in JSON.
+"""
+
+
 CONCISE_QUERY_PATTERNS = (
     r"\bbrief\b",
     r"\bbriefly\b",
@@ -191,3 +207,134 @@ Produce a well-cited answer in JSON format."""
             },
             latency_ms=latency,
         )
+
+    async def run_stream(self, input: AgentInput):
+        """
+        Synthesize an answer with streaming output.
+
+        Yields chunks of the answer as they're generated.
+        Final yield is the complete AgentOutput.
+        """
+        start_time = time.perf_counter()
+
+        concise = self._should_be_concise(input.query)
+        if concise:
+            detail_guidance = (
+                "The user requested a brief response. Keep it tight (around 4-6 sentences), "
+                "focus on the key facts, and still include citations."
+            )
+        else:
+            detail_guidance = (
+                "Provide a research-style response with context, key points, and implications or "
+                "limitations. Aim for multiple paragraphs or labeled sections while staying grounded "
+                "in the sources."
+            )
+
+        # Get context from previous agents
+        internal_context = input.context.get("internal_sources", [])
+        web_context = input.context.get("web_sources", [])
+
+        # Build the context section
+        context_parts = []
+        source_map = {}
+        source_num = 1
+
+        # Add internal sources
+        for source in internal_context:
+            context_parts.append(
+                f"[Source {source_num}] (Internal Document)\n{source.get('content', '')}"
+            )
+            source_map[source_num] = {
+                "type": "internal",
+                "chunk_id": source.get("chunk_id"),
+                "document_id": source.get("document_id"),
+            }
+            source_num += 1
+
+        # Add web sources
+        for source in web_context:
+            context_parts.append(
+                f"[Source {source_num}] ({source.get('url', 'Web')})\n{source.get('content', '')}"
+            )
+            source_map[source_num] = {
+                "type": "web",
+                "url": source.get("url"),
+                "title": source.get("title"),
+            }
+            source_num += 1
+
+        context_text = "\n\n---\n\n".join(context_parts)
+
+        # Build the prompt for streaming (markdown output, not JSON)
+        prompt = f"""Answer this research question based on the provided context:
+
+Question: {input.query}
+
+Response detail guidance: {detail_guidance}
+
+Context:
+{context_text}
+
+Write a well-formatted markdown answer with inline [Source N] citations."""
+
+        # Stream the answer
+        full_answer = ""
+        full_thoughts = ""
+        try:
+            async for chunk in self.gemini.generate_stream(
+                prompt=prompt,
+                system_instruction=SYNTHESIS_STREAMING_PROMPT,
+                temperature=0.5,
+                max_tokens=3072,
+                include_thoughts=True,
+            ):
+                chunk_type = chunk.get("type", "text")
+                chunk_content = chunk.get("content", "")
+
+                if chunk_type == "thought":
+                    full_thoughts += chunk_content
+                    yield {"type": "thought_chunk", "content": chunk_content}
+                elif chunk_type == "text":
+                    full_answer += chunk_content
+                    yield {"type": "answer_chunk", "content": chunk_content}
+        except Exception as e:
+            logger.error(f"[{self.name}] Streaming error: {e}")
+            full_answer = (
+                "I apologize, but I encountered an issue generating a response. "
+                "Please try again."
+            )
+            yield {"type": "answer_chunk", "content": full_answer}
+
+        latency = int((time.perf_counter() - start_time) * 1000)
+
+        # Extract sources used from the answer (look for [Source N] patterns)
+        import re
+
+        sources_used = list(
+            set(int(m) for m in re.findall(r"\[Source (\d+)\]", full_answer))
+        )
+
+        # Build final result
+        result = {
+            "answer": full_answer,
+            "sources_used": sources_used,
+            "confidence": "medium",  # Default for streaming
+            "sections": [],
+            "source_map": source_map,
+        }
+
+        # Yield final output
+        yield {
+            "type": "complete",
+            "output": AgentOutput(
+                agent_name=self.name,
+                result=result,
+                metadata={
+                    "total_sources": len(source_map),
+                    "internal_count": len(internal_context),
+                    "web_count": len(web_context),
+                    "streaming": True,
+                },
+                latency_ms=latency,
+            ),
+        }

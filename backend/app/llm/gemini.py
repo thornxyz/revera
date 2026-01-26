@@ -135,6 +135,73 @@ class GeminiClient:
             logger.error(f"[Gemini] Error generating JSON response: {e}", exc_info=True)
             raise
 
+    async def generate_stream(
+        self,
+        prompt: str,
+        system_instruction: str | None = None,
+        temperature: float = 0.5,
+        max_tokens: int = 4096,
+        include_thoughts: bool = True,
+    ):
+        """
+        Stream text response from LLM with optional thinking/reasoning.
+
+        Yields dicts with 'type' and 'content':
+        - type='thought': reasoning/thinking content (if enabled)
+        - type='text': actual response content
+
+        Args:
+            prompt: The user prompt
+            system_instruction: Optional system instruction
+            temperature: Sampling temperature (0.0-1.0)
+            max_tokens: Maximum output tokens
+            include_thoughts: Whether to include thinking/reasoning tokens
+
+        Yields:
+            dict: {"type": "thought"|"text", "content": str}
+        """
+        config = types.GenerateContentConfig(
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+        )
+
+        if system_instruction:
+            config.system_instruction = system_instruction
+
+        # Enable thinking if requested
+        if include_thoughts:
+            config.thinking_config = types.ThinkingConfig(
+                include_thoughts=True,
+            )
+
+        try:
+            # Use ASYNC streaming API for true token-by-token streaming
+            response_stream = await self.client.aio.models.generate_content_stream(
+                model=self.model,
+                contents=prompt,
+                config=config,
+            )
+
+            async for chunk in response_stream:
+                # Check for thinking/reasoning in parts
+                if hasattr(chunk, "candidates") and chunk.candidates:
+                    for candidate in chunk.candidates:
+                        if hasattr(candidate, "content") and candidate.content:
+                            for part in candidate.content.parts or []:
+                                # Yield thought content if present
+                                if hasattr(part, "thought") and part.thought:
+                                    yield {"type": "thought", "content": part.thought}
+                                # Yield text content
+                                if hasattr(part, "text") and part.text:
+                                    yield {"type": "text", "content": part.text}
+                # Fallback: use chunk.text directly
+                elif hasattr(chunk, "text") and chunk.text:
+                    yield {"type": "text", "content": chunk.text}
+
+        except Exception as e:
+            logger.error(f"[Gemini] Error in streaming generation: {e}", exc_info=True)
+            raise
+
 
 # Singleton instance
 _gemini_client: GeminiClient | None = None

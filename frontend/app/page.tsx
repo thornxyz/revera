@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Upload, Sparkles, Loader2 } from "lucide-react";
+import { Upload, Sparkles, Loader2, Brain } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,10 +11,12 @@ import { DocumentsPanel } from "@/components/documents-panel";
 import { UploadDialog } from "@/components/upload-dialog";
 import { SessionsSidebar } from "@/components/sessions-sidebar";
 import { AgentTimelinePanel } from "@/components/agent-timeline";
-import { research, getSession, ResearchResponse, Source } from "@/lib/api";
+import { research, getSession, researchStream, ResearchResponse, Source } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { ResizableLayout } from "@/components/resizable-layout";
 import { LoginPage } from "@/components/login-page";
+import { StreamMarkdown } from "@/components/stream-markdown";
+import { AgentProgress } from "@/components/agent-progress";
 
 export default function ResearchPage() {
   const { user, loading, signOut } = useAuth();
@@ -32,6 +34,14 @@ export default function ResearchPage() {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const [documentsRefreshToken, setDocumentsRefreshToken] = useState(0);
+
+  // Streaming State
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [streamingAnswer, setStreamingAnswer] = useState("");
+  const [streamingThoughts, setStreamingThoughts] = useState("");
+  const [currentAgent, setCurrentAgent] = useState<string | null>(null);
+  const [completedAgents, setCompletedAgents] = useState<string[]>([]);
+  const [streamingSources, setStreamingSources] = useState<Source[]>([]);
 
   // Show loading state
   if (loading) {
@@ -51,19 +61,74 @@ export default function ResearchPage() {
     if (!query.trim()) return;
 
     setIsLoading(true);
+    setIsStreaming(true);
+    setStreamingAnswer("");
+    setStreamingThoughts("");
+    setCurrentAgent(null);
+    setCompletedAgents([]);
+    setStreamingSources([]);
     setError(null);
+    setResult(null);
+
+    const currentQuery = query;
+    setQuery("");
 
     try {
-      const response = await research(
-        query,
+      await researchStream(
+        currentQuery,
         true,
-        selectedDocumentIds.length ? selectedDocumentIds : undefined
+        selectedDocumentIds.length ? selectedDocumentIds : undefined,
+        {
+          onAgentStatus: (node, status) => {
+            if (status === "complete") {
+              setCompletedAgents((prev) => [...prev, node]);
+              setCurrentAgent(null);
+            } else {
+              setCurrentAgent(node);
+            }
+          },
+          onAnswerChunk: (content) => {
+            setStreamingAnswer((prev) => prev + content);
+          },
+          onThoughtChunk: (content) => {
+            setStreamingThoughts((prev) => prev + content);
+          },
+          onSources: (sources) => {
+            setStreamingSources((prev) => [...prev, ...sources]);
+          },
+          onComplete: (data) => {
+            // Use streamingSources as fallback if data.sources is empty
+            const finalSources = (data.sources && data.sources.length > 0)
+              ? data.sources
+              : streamingSources;
+
+            setResult({
+              session_id: data.session_id,
+              query: currentQuery,
+              answer: "", // Will use streamingAnswer instead
+              sources: finalSources,
+              verification: data.verification || {
+                verification_status: data.confidence || "unknown",
+                confidence_score: 0,
+                verified_claims: [],
+                unsupported_claims: [],
+                overall_assessment: "",
+              },
+              confidence: data.confidence || "unknown",
+              total_latency_ms: data.total_latency_ms || 0,
+            });
+            setCurrentSessionId(data.session_id);
+            setIsStreaming(false);
+          },
+          onError: (message) => {
+            setError(message);
+            setIsStreaming(false);
+          },
+        }
       );
-      setResult(response);
-      setCurrentSessionId(response.session_id); // Track current session
-      setQuery("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Research failed");
+      setIsStreaming(false);
     } finally {
       setIsLoading(false);
     }
@@ -78,9 +143,9 @@ export default function ResearchPage() {
         const resolvedQuery = session.result.query?.trim() || session.query;
         const normalizedSources = session.result.sources ?? [];
         const normalizedAnswer = session.result.answer || "";
-        setResult({ 
-          ...session.result, 
-          query: resolvedQuery, 
+        setResult({
+          ...session.result,
+          query: resolvedQuery,
           sources: normalizedSources,
           answer: normalizedAnswer
         });
@@ -113,12 +178,12 @@ export default function ResearchPage() {
     if (!answer || typeof answer !== 'string') {
       return <span className="text-slate-500 italic">No answer available</span>;
     }
-    
+
     // Pattern to match citations like [Source 1], [Source 1, 2], [Source 1, 4, 5], etc.
     const citationPattern =
       /\[(?:source\s*\d+(?:\s*,\s*(?:source\s*)?\d+)*)\]/gi;
     const parts = answer.split(new RegExp(`(${citationPattern.source})`, "gi"));
-    
+
     return parts.map((part, index) => {
       if (citationPattern.test(part)) {
         // Extract all source numbers from the citation
@@ -289,11 +354,10 @@ export default function ResearchPage() {
                     </div>
                   </CardHeader>
                   <CardContent>
-                    <div className="prose prose-slate prose-sm max-w-none">
-                      <p className="whitespace-pre-wrap leading-relaxed text-slate-700">
-                        {renderAnswerWithSources(result.answer)}
-                      </p>
-                    </div>
+                    <StreamMarkdown
+                      content={streamingAnswer || result.answer}
+                      isStreaming={false}
+                    />
                   </CardContent>
                 </Card>
 
@@ -366,7 +430,7 @@ export default function ResearchPage() {
               </div>
             )}
 
-            {!result && !isLoading && (
+            {!result && !isLoading && !isStreaming && (
               <div className="flex flex-col items-center justify-center h-full text-center px-4">
                 <div className="relative">
                   <div className="absolute inset-0 bg-linear-to-r from-emerald-400 to-sky-400 blur-3xl opacity-20 rounded-full"></div>
@@ -382,7 +446,55 @@ export default function ResearchPage() {
               </div>
             )}
 
-            {isLoading && (
+            {/* Streaming Content */}
+            {isStreaming && (
+              <div className="space-y-6 max-w-5xl mx-auto">
+                {/* Agent Progress */}
+                <AgentProgress
+                  completedAgents={completedAgents}
+                  currentAgent={currentAgent}
+                />
+
+                {/* Streaming Thoughts */}
+                {streamingThoughts && (
+                  <Card className="bg-slate-50/80 border-slate-200 backdrop-blur-sm overflow-hidden">
+                    <CardHeader className="py-3 bg-slate-100/50 border-b border-slate-200/50">
+                      <CardTitle className="text-sm font-medium text-slate-600 flex items-center gap-2">
+                        <Brain className="h-4 w-4 text-violet-500" />
+                        Reasoning Process
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="pt-3 max-h-60 overflow-y-auto">
+                      <p className="text-xs font-mono text-slate-600 whitespace-pre-wrap leading-relaxed">
+                        {streamingThoughts}
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Streaming Answer */}
+                {streamingAnswer && (
+                  <Card className="bg-white/90 border-slate-200/80 backdrop-blur-sm shadow-lg">
+                    <CardHeader className="pb-3">
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-xl font-semibold">Research Result</CardTitle>
+                        <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200">
+                          Streaming...
+                        </Badge>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      <StreamMarkdown
+                        content={streamingAnswer}
+                        isStreaming={true}
+                      />
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            )}
+
+            {isLoading && !isStreaming && (
               <div className="flex flex-col items-center justify-center h-full">
                 <div className="relative mb-6">
                   <div className="absolute inset-0 bg-emerald-300 blur-2xl opacity-30 rounded-full"></div>

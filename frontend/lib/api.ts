@@ -195,3 +195,131 @@ export async function deleteSession(sessionId: string): Promise<void> {
         throw new Error(`Failed to delete session: ${response.statusText}`);
     }
 }
+
+
+// Streaming Types
+export interface StreamChunk {
+    type: "agent_status" | "answer_chunk" | "thought_chunk" | "sources" | "complete" | "error";
+    node?: string;
+    status?: string;
+    content?: string;
+    sources?: Source[];
+    session_id?: string;
+    confidence?: string;
+    total_latency_ms?: number;
+    verification?: Verification;
+    message?: string;
+}
+
+export interface StreamingCallbacks {
+    onAgentStatus?: (node: string, status: string) => void;
+    onAnswerChunk?: (content: string) => void;
+    onThoughtChunk?: (content: string) => void;
+    onSources?: (sources: Source[]) => void;
+    onComplete?: (data: {
+        session_id: string;
+        confidence: string;
+        total_latency_ms: number;
+        sources: Source[];
+        verification?: Verification;
+    }) => void;
+    onError?: (message: string) => void;
+}
+
+/**
+ * Execute a research query with streaming responses.
+ * 
+ * Uses Server-Sent Events to receive real-time updates:
+ * - Agent status updates as each node runs
+ * - Answer chunks as the LLM generates text
+ * - Sources from retrieval
+ * - Final complete event with verification
+ */
+export async function researchStream(
+    query: string,
+    useWeb: boolean = true,
+    documentIds?: string[],
+    callbacks?: StreamingCallbacks,
+): Promise<void> {
+    const headers = await getAuthHeaders();
+
+    const response = await fetch(`${API_BASE_URL}/api/research/query/stream`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+            query,
+            use_web: useWeb,
+            document_ids: documentIds,
+        }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Research stream failed: ${response.statusText}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+        throw new Error("No response body");
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+
+            // Process complete SSE messages
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || ""; // Keep incomplete line in buffer
+
+            let currentEvent = "";
+            let currentData = "";
+
+            for (const line of lines) {
+                if (line.startsWith("event: ")) {
+                    currentEvent = line.slice(7).trim();
+                } else if (line.startsWith("data: ")) {
+                    currentData = line.slice(6);
+                } else if (line === "" && currentEvent && currentData) {
+                    // End of event, process it
+                    try {
+                        const data = JSON.parse(currentData);
+
+                        switch (currentEvent) {
+                            case "agent_status":
+                                callbacks?.onAgentStatus?.(data.node, data.status);
+                                break;
+                            case "answer_chunk":
+                                callbacks?.onAnswerChunk?.(data.content);
+                                break;
+                            case "thought_chunk":
+                                callbacks?.onThoughtChunk?.(data.content);
+                                break;
+                            case "sources":
+                                callbacks?.onSources?.(data.sources);
+                                break;
+                            case "complete":
+                                callbacks?.onComplete?.(data);
+                                break;
+                            case "error":
+                                callbacks?.onError?.(data.message);
+                                break;
+                        }
+                    } catch (e) {
+                        console.error("Failed to parse SSE data:", e, currentData);
+                    }
+
+                    currentEvent = "";
+                    currentData = "";
+                }
+            }
+        }
+    } finally {
+        reader.releaseLock();
+    }
+}
+
