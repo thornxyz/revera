@@ -1,5 +1,6 @@
 """Orchestrator - Coordinates agent execution for research queries using LangGraph."""
 
+import asyncio
 import logging
 import time
 from uuid import uuid4
@@ -309,6 +310,7 @@ class Orchestrator:
                 elif chunk.get("type") == "answer_chunk":
                     yield {"type": "answer_chunk", "content": chunk.get("content", "")}
                 elif chunk.get("type") == "complete":
+                    logger.info("[ORCH] Received synthesis complete event")
                     synthesis_output = chunk.get("output")
                     synthesis_result = (
                         synthesis_output.result if synthesis_output else {}
@@ -318,27 +320,52 @@ class Orchestrator:
 
             yield {"type": "node_complete", "node": "synthesis", "status": "complete"}
 
-            # 5. Critic/Verification
+            # Yield sources immediately after synthesis (don't wait for critic)
+            all_sources = self._normalize_sources(internal_sources, web_sources)
+            yield {"type": "sources", "sources": all_sources}
+            logger.info(f"[ORCH] Sent sources event: {len(all_sources)} total sources")
+
+            # 5. Critic/Verification (with timeout and error handling)
             yield {"type": "node_complete", "node": "critic", "status": "running"}
-            critic = CriticAgent()
-            critic_input = AgentInput(
-                query=query,
-                context={
-                    "synthesis_result": synthesis_result,
-                    "internal_sources": internal_sources,
-                    "web_sources": web_sources,
-                },
-            )
-            critic_output = await critic.run(critic_input)
-            verification = critic_output.result
-            agent_timeline.append(critic_output.to_dict())
-            yield {"type": "node_complete", "node": "critic", "status": "complete"}
+            verification = None
+            try:
+                critic = CriticAgent()
+                critic_input = AgentInput(
+                    query=query,
+                    context={
+                        "synthesis_result": synthesis_result,
+                        "internal_sources": internal_sources,
+                        "web_sources": web_sources,
+                    },
+                )
+                # Add timeout to prevent hanging (30 seconds)
+                critic_output = await asyncio.wait_for(
+                    critic.run(critic_input), timeout=30.0
+                )
+                verification = critic_output.result
+                agent_timeline.append(critic_output.to_dict())
+                yield {"type": "node_complete", "node": "critic", "status": "complete"}
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "[ORCH] Critic timed out after 30s, continuing without verification"
+                )
+                verification = {
+                    "verification_status": "timeout",
+                    "issues": ["Verification timed out"],
+                }
+                yield {"type": "node_complete", "node": "critic", "status": "timeout"}
+            except Exception as e:
+                logger.error(f"[ORCH] Critic failed: {e}", exc_info=True)
+                verification = {
+                    "verification_status": "error",
+                    "issues": [f"Verification error: {str(e)}"],
+                }
+                yield {"type": "node_complete", "node": "critic", "status": "error"}
 
             # Calculate total latency
             total_latency = int((time.perf_counter() - start_time) * 1000)
 
-            # Combine all sources
-            all_sources = self._normalize_sources(internal_sources, web_sources)
+            # Note: all_sources already computed and sent earlier (line 323-325)
 
             # Update session in database
             self.supabase.table("research_sessions").update(

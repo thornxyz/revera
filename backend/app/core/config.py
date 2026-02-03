@@ -1,6 +1,5 @@
 from pathlib import Path
 from functools import lru_cache
-from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -8,6 +7,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Gemini Models (hardcoded, not from env)
 GEMINI_EMBEDDING_MODEL = "gemini-embedding-001"
 GEMINI_MODEL = "gemini-3-flash-preview"
+
+# Gemini Thinking Configuration
+GEMINI_THINKING_LEVEL = "medium"  # Options: minimal, low, medium, high
 
 
 class Settings(BaseSettings):
@@ -18,14 +20,13 @@ class Settings(BaseSettings):
     debug: bool = False
 
     # Supabase
-    supabase_url: str
-    supabase_anon_key: str
-    supabase_service_role_key: str
+    supabase_url: str = ""
+    supabase_anon_key: str = ""
+    supabase_service_role_key: str = ""
 
     # Google Gemini
-    gemini_api_key: str
+    gemini_api_key: str = ""
 
-    # Web Search (Tavily)
     # Web Search (Tavily)
     tavily_api_key: str | None = None
 

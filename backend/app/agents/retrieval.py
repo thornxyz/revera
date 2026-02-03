@@ -1,4 +1,4 @@
-"""Retrieval Agent - Executes hybrid RAG search."""
+"""Retrieval Agent - Executes hybrid RAG search with RRF fusion."""
 
 import time
 from uuid import UUID
@@ -17,19 +17,22 @@ class RetrievalAgent(BaseAgent):
         self.search_service = get_search_service()
 
     async def run(self, input: AgentInput) -> AgentOutput:
-        """Execute hybrid search and return relevant chunks."""
+        """Execute hybrid search with RRF fusion and return relevant chunks."""
         start_time = time.perf_counter()
 
         # Extract search parameters
         top_k = input.constraints.get("max_sources", 10)
         document_ids = input.context.get("document_ids")
+        # Allow disabling query rewriting via constraints if needed
+        rewrite_query = input.constraints.get("rewrite_query", True)
 
-        # Execute hybrid search
-        results = await self.search_service.search(
+        # Execute hybrid search with RRF fusion and query rewriting
+        results = await self.search_service.search_with_rrf(
             query=input.query,
             user_id=UUID(self.user_id),
             top_k=top_k,
             document_ids=[UUID(d) for d in document_ids] if document_ids else None,
+            rewrite_query=rewrite_query,
         )
 
         # Format results for downstream agents
@@ -52,6 +55,7 @@ class RetrievalAgent(BaseAgent):
             metadata={
                 "total_results": len(results),
                 "top_k": top_k,
+                "query_rewritten": rewrite_query,
             },
             latency_ms=latency,
         )

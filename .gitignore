@@ -57,3 +57,5 @@ next-env.d.ts
 
 # Model cache
 backend/models_cache/
+
+AGENTS.md

@@ -264,6 +264,7 @@ export async function researchStream(
 
     const decoder = new TextDecoder();
     let buffer = "";
+    let streamCompleted = false;
 
     try {
         while (true) {
@@ -304,9 +305,11 @@ export async function researchStream(
                                 break;
                             case "complete":
                                 callbacks?.onComplete?.(data);
+                                streamCompleted = true;
                                 break;
                             case "error":
                                 callbacks?.onError?.(data.message);
+                                streamCompleted = true;
                                 break;
                         }
                     } catch (e) {
@@ -316,6 +319,11 @@ export async function researchStream(
                     currentEvent = "";
                     currentData = "";
                 }
+            }
+
+            // Exit early if stream is complete
+            if (streamCompleted) {
+                break;
             }
         }
     } finally {

@@ -13,21 +13,34 @@ logger = logging.getLogger(__name__)
 
 SYNTHESIS_SYSTEM_PROMPT = """You are a research synthesis agent. Your job is to produce accurate, well-cited answers based on provided context.
 
-Rules:
-1. ONLY use information from the provided context
-2. Cite sources inline using [Source N] format where N is the source number
-3. If information is not in the context, say "I could not find information about X"
-4. Default to a moderately detailed, research-style response with multiple paragraphs
-5. Include background/context, key points, and implications or limitations when possible
-6. Use labeled sections or clear paragraph breaks when it helps readability
-7. If the question explicitly asks for a brief/summary response, keep it concise
-8. Never make up information
+REASONING PROCESS (follow these steps internally before writing):
+1. Identify the key aspects of the question
+2. Scan each source for relevant information
+3. Check for contradictions between sources
+4. Determine confidence level based on source agreement and quality
+5. Plan the answer structure
+
+CITATION RULES (CRITICAL):
+1. ONLY use information explicitly stated in the provided sources
+2. Every factual claim MUST have an inline citation using [Source N] format
+3. If sources conflict, acknowledge both perspectives with citations
+4. If information is not in the context, explicitly state "I could not find information about X"
+5. NEVER infer, assume, or extrapolate beyond what sources explicitly state
+6. When uncertain, prefer to say "The sources suggest..." rather than stating as fact
+
+ANSWER STRUCTURE:
+1. Lead with the most direct answer to the question
+2. Provide supporting details with citations
+3. Include background/context when it aids understanding
+4. Note any limitations, caveats, or gaps in the available information
+5. For complex topics, use sections or bullet points for clarity
 
 Output format:
 {
-    "answer": "Your synthesized answer with [Source 1] inline citations",
+    "answer": "Your synthesized answer with [Source 1] inline citations for every claim",
     "sources_used": [1, 2, 3],
     "confidence": "high|medium|low",
+    "reasoning": "Brief explanation of how you synthesized the answer and any source conflicts",
     "sections": [
         {"title": "Section Title", "content": "Section content with [Source N] citations"}
     ]
@@ -37,15 +50,25 @@ Output format:
 
 SYNTHESIS_STREAMING_PROMPT = """You are a research synthesis agent. Your job is to produce accurate, well-cited answers based on provided context.
 
-Rules:
-1. ONLY use information from the provided context
-2. Cite sources inline using [Source N] format where N is the source number
-3. If information is not in the context, say "I could not find information about X"
-4. Default to a moderately detailed, research-style response with multiple paragraphs
-5. Include background/context, key points, and implications or limitations when possible
-6. Use markdown formatting: headers (##), bullet points, bold for emphasis, code blocks when appropriate
-7. If the question explicitly asks for a brief/summary response, keep it concise
-8. Never make up information
+REASONING PROCESS (think through these before writing):
+1. What are the key aspects of the question?
+2. What does each source say about these aspects?
+3. Are there any contradictions between sources?
+4. What is my confidence level based on source quality and agreement?
+
+CITATION RULES (CRITICAL):
+1. ONLY use information explicitly stated in the provided sources
+2. Every factual claim MUST have an inline citation using [Source N] format
+3. If sources conflict, acknowledge both perspectives with their citations
+4. If information is not available, explicitly state "I could not find information about X"
+5. NEVER infer, assume, or extrapolate beyond what sources explicitly state
+
+FORMATTING:
+1. Use markdown formatting: headers (##), bullet points, bold for emphasis
+2. Lead with the most direct answer to the question
+3. Provide supporting details with citations
+4. Note any limitations or gaps in the available information
+5. For complex topics, use sections for clarity
 
 Write a well-formatted markdown response with inline citations. Do NOT wrap in JSON.
 """
@@ -291,6 +314,14 @@ Write a well-formatted markdown answer with inline [Source N] citations."""
                 chunk_type = chunk.get("type", "text")
                 chunk_content = chunk.get("content", "")
 
+                # Ensure chunk_content is a string
+                if not isinstance(chunk_content, str):
+                    logger.warning(
+                        f"[{self.name}] Unexpected chunk content type: "
+                        f"{type(chunk_content)}, skipping"
+                    )
+                    continue
+
                 if chunk_type == "thought":
                     full_thoughts += chunk_content
                     yield {"type": "thought_chunk", "content": chunk_content}
@@ -298,7 +329,7 @@ Write a well-formatted markdown answer with inline [Source N] citations."""
                     full_answer += chunk_content
                     yield {"type": "answer_chunk", "content": chunk_content}
         except Exception as e:
-            logger.error(f"[{self.name}] Streaming error: {e}")
+            logger.error(f"[{self.name}] Streaming error: {e}", exc_info=True)
             full_answer = (
                 "I apologize, but I encountered an issue generating a response. "
                 "Please try again."
@@ -306,6 +337,11 @@ Write a well-formatted markdown answer with inline [Source N] citations."""
             yield {"type": "answer_chunk", "content": full_answer}
 
         latency = int((time.perf_counter() - start_time) * 1000)
+
+        logger.info(
+            f"[{self.name}] Streaming complete: answer={len(full_answer)} chars, "
+            f"thoughts={len(full_thoughts)} chars, latency={latency}ms"
+        )
 
         # Extract sources used from the answer (look for [Source N] patterns)
         import re
@@ -324,6 +360,7 @@ Write a well-formatted markdown answer with inline [Source N] citations."""
         }
 
         # Yield final output
+        logger.info(f"[{self.name}] Yielding complete event")
         yield {
             "type": "complete",
             "output": AgentOutput(

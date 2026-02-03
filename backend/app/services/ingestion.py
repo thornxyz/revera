@@ -1,6 +1,8 @@
 """Document ingestion service - PDF parsing, chunking, and embedding."""
 
+import asyncio
 import io
+import logging
 import uuid
 from typing import Any, cast
 from uuid import UUID
@@ -15,6 +17,8 @@ from app.core.config import get_settings
 from app.core.database import get_supabase_client
 from app.core.qdrant import get_qdrant_service
 from app.llm.gemini import get_gemini_client
+
+logger = logging.getLogger(__name__)
 
 
 class IngestionService:
@@ -93,20 +97,34 @@ class IngestionService:
 
         chunk_texts = [c["content"] for c in chunks]
 
-        # 4. Generate Embeddings (Triple Hybrid)
+        # 4. Generate Embeddings (Triple Hybrid) - PARALLEL EXECUTION
+        logger.info(f"Generating embeddings for {len(chunks)} chunks in parallel...")
 
-        # A. Dense (Gemini) - 3072d
-        print(f"Generating Dense Embeddings for {len(chunks)} chunks...")
-        dense_embeddings = self.gemini.embed_texts(chunk_texts)
+        # Define async/threaded tasks for each embedding type
+        async def generate_dense():
+            """Dense embeddings via Gemini API (async network call)."""
+            return await self.gemini.embed_texts_async(chunk_texts)
 
-        # B. Late Interaction (ColBERT) - Local
-        print("Generating Late Interaction Embeddings...")
-        # FastEmbed returns a generator, consume it
-        colbert_embeddings = list(self.colbert_model.embed(chunk_texts))
+        async def generate_colbert():
+            """ColBERT embeddings via local model (CPU-bound, run in thread)."""
+            return await asyncio.to_thread(
+                lambda: list(self.colbert_model.embed(chunk_texts))
+            )
 
-        # C. Sparse (BM25) - Local
-        print("Generating Sparse Embeddings...")
-        sparse_embeddings = list(self.sparse_model.embed(chunk_texts))
+        async def generate_sparse():
+            """Sparse BM25 embeddings via local model (CPU-bound, run in thread)."""
+            return await asyncio.to_thread(
+                lambda: list(self.sparse_model.embed(chunk_texts))
+            )
+
+        # Run all three embedding generations concurrently
+        dense_embeddings, colbert_embeddings, sparse_embeddings = await asyncio.gather(
+            generate_dense(),
+            generate_colbert(),
+            generate_sparse(),
+        )
+
+        logger.info("All embeddings generated successfully")
 
         # 5. Prepare Points for Qdrant
         points = []

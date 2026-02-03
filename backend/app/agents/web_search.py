@@ -28,19 +28,33 @@ class WebSource:
 
 
 QUERY_EXPANSION_PROMPT = """Generate 1-3 optimized search queries to comprehensively answer this research question.
-For complex queries, create variations that explore different aspects.
-For simple queries, return just one optimized version.
+Create diverse queries that explore different angles and maximize coverage.
 
 Original query: {query}
+
+Query Generation Strategy:
+1. PRIMARY QUERY: Rewrite for maximum relevance (explicit terms, no pronouns)
+2. ALTERNATIVE 1: Focus on a different aspect or use synonyms
+3. ALTERNATIVE 2: Use a contrasting perspective or related concept
+
+Query Types to Consider:
+- Factual: "what is X", "how does X work"
+- Comparative: "X vs Y", "difference between X and Y"
+- Temporal: "latest X", "X in 2024", "recent developments in X"
+- Conceptual: "why X", "implications of X"
 
 Output format (JSON):
 {{
     "primary_query": "main optimized search query",
-    "alternative_queries": ["alternative angle 1", "alternative angle 2"],
-    "query_type": "factual|conceptual|comparative|temporal"
+    "alternative_queries": ["semantically different angle 1", "contrasting or broader angle 2"],
+    "query_type": "factual|conceptual|comparative|temporal",
+    "search_focus": "brief description of what aspects each query targets"
 }}
 
-Keep each query under 15 words and focused on retrievable facts."""
+Rules:
+- Keep each query under 15 words and focused on retrievable facts
+- Ensure alternatives are meaningfully different from primary (not just rephrased)
+- Include specific entities, names, or technical terms when relevant"""
 
 
 class WebSearchAgent(BaseAgent):
@@ -67,7 +81,9 @@ class WebSearchAgent(BaseAgent):
             self.tavily = None
 
     async def run(self, input: AgentInput) -> AgentOutput:
-        """Execute web search with multi-query expansion and ranking."""
+        """Execute web search with multi-query expansion and parallel execution."""
+        import asyncio
+
         start_time = time.perf_counter()
 
         # Check if web search is configured
@@ -82,44 +98,68 @@ class WebSearchAgent(BaseAgent):
         # Expand query into multiple search variations
         query_expansion = await self._expand_query(input.query)
 
-        # Execute searches for all query variations
-        all_sources = []
-        search_metadata = []
+        # Build list of search tasks to execute in parallel
+        search_tasks = []
+        search_queries = []
 
-        # Primary query
-        primary_sources, tavily_answer = await self._search_tavily(
-            query_expansion["primary_query"], input.constraints
+        # Primary query task
+        search_tasks.append(
+            self._search_tavily(query_expansion["primary_query"], input.constraints)
         )
-        all_sources.extend(primary_sources)
-        search_metadata.append(
-            {
-                "query": query_expansion["primary_query"],
-                "type": "primary",
-                "results": len(primary_sources),
-            }
+        search_queries.append(
+            {"query": query_expansion["primary_query"], "type": "primary"}
         )
 
-        # Alternative queries (if any)
+        # Alternative query tasks
         max_alternatives = input.constraints.get("max_alternative_queries", 2)
         for alt_query in query_expansion.get("alternative_queries", [])[
             :max_alternatives
         ]:
             if alt_query and alt_query != query_expansion["primary_query"]:
-                alt_sources, _ = await self._search_tavily(
-                    alt_query,
-                    {
-                        **input.constraints,
-                        "max_web_results": 3,
-                    },  # Fewer for alternatives
+                search_tasks.append(
+                    self._search_tavily(
+                        alt_query,
+                        {**input.constraints, "max_web_results": 3},
+                    )
                 )
-                all_sources.extend(alt_sources)
+                search_queries.append({"query": alt_query, "type": "alternative"})
+
+        # Execute all searches in parallel
+        search_results = await asyncio.gather(*search_tasks, return_exceptions=True)
+
+        # Process results
+        all_sources = []
+        search_metadata = []
+        tavily_answer = None
+
+        for i, result in enumerate(search_results):
+            query_info = search_queries[i]
+            if isinstance(result, BaseException):
+                logger.warning(
+                    f"[{self.name}] Search failed for '{query_info['query']}': {result}"
+                )
                 search_metadata.append(
                     {
-                        "query": alt_query,
-                        "type": "alternative",
-                        "results": len(alt_sources),
+                        "query": query_info["query"],
+                        "type": query_info["type"],
+                        "results": 0,
+                        "error": str(result),
                     }
                 )
+                continue
+
+            sources, answer = result
+            all_sources.extend(sources)
+            search_metadata.append(
+                {
+                    "query": query_info["query"],
+                    "type": query_info["type"],
+                    "results": len(sources),
+                }
+            )
+            # Capture Tavily answer from primary query
+            if query_info["type"] == "primary" and answer:
+                tavily_answer = answer
 
         # Deduplicate and rank by relevance
         unique_sources = self._deduplicate_and_rank(

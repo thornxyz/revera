@@ -4,7 +4,12 @@ import logging
 from google import genai
 from google.genai import types
 
-from app.core.config import get_settings, GEMINI_EMBEDDING_MODEL, GEMINI_MODEL
+from app.core.config import (
+    get_settings,
+    GEMINI_EMBEDDING_MODEL,
+    GEMINI_MODEL,
+    GEMINI_THINKING_LEVEL,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +22,7 @@ class GeminiClient:
         self.client = genai.Client(api_key=settings.gemini_api_key)
         self.embedding_model = GEMINI_EMBEDDING_MODEL
         self.model = GEMINI_MODEL
+        self.thinking_level = GEMINI_THINKING_LEVEL
 
     def embed_text(self, text: str) -> list[float]:
         """Generate embedding for a single text."""
@@ -38,6 +44,27 @@ class GeminiClient:
         for start in range(0, len(texts), batch_size):
             batch = texts[start : start + batch_size]
             result = self.client.models.embed_content(
+                model=self.embedding_model,
+                contents=[
+                    types.Content(parts=[types.Part(text=text)]) for text in batch
+                ],
+            )
+            if result.embeddings is None:
+                continue
+            embeddings.extend(
+                [e.values for e in result.embeddings if e.values is not None]
+            )
+
+        return embeddings
+
+    async def embed_texts_async(self, texts: list[str]) -> list[list[float]]:
+        """Generate embeddings for multiple texts asynchronously (non-blocking)."""
+        embeddings: list[list[float]] = []
+        batch_size = 100
+
+        for start in range(0, len(texts), batch_size):
+            batch = texts[start : start + batch_size]
+            result = await self.client.aio.models.embed_content(
                 model=self.embedding_model,
                 contents=[
                     types.Content(parts=[types.Part(text=text)]) for text in batch
@@ -168,10 +195,12 @@ class GeminiClient:
         if system_instruction:
             config.system_instruction = system_instruction
 
-        # Enable thinking if requested
+        # Enable thinking if requested (supported on Gemini 3+ models)
+        # Note: Gemini 3 models use thinking_level parameter
         if include_thoughts:
             config.thinking_config = types.ThinkingConfig(
                 include_thoughts=True,
+                thinking_level=self.thinking_level,  # type: ignore
             )
 
         try:
@@ -188,15 +217,29 @@ class GeminiClient:
                     for candidate in chunk.candidates:
                         if hasattr(candidate, "content") and candidate.content:
                             for part in candidate.content.parts or []:
-                                # Yield thought content if present
+                                # Yield thought content if present (must be string, not bool)
                                 if hasattr(part, "thought") and part.thought:
-                                    yield {"type": "thought", "content": part.thought}
+                                    if isinstance(part.thought, str):
+                                        logger.info(
+                                            f"[Gemini] Thought chunk: {len(part.thought)} chars"
+                                        )
+                                        yield {
+                                            "type": "thought",
+                                            "content": part.thought,
+                                        }
+                                    else:
+                                        logger.info(
+                                            f"[Gemini] Skipping non-string thought: "
+                                            f"type={type(part.thought).__name__}, value={part.thought}"
+                                        )
                                 # Yield text content
                                 if hasattr(part, "text") and part.text:
                                     yield {"type": "text", "content": part.text}
                 # Fallback: use chunk.text directly
                 elif hasattr(chunk, "text") and chunk.text:
                     yield {"type": "text", "content": chunk.text}
+
+            logger.info("[Gemini] Stream complete")
 
         except Exception as e:
             logger.error(f"[Gemini] Error in streaming generation: {e}", exc_info=True)

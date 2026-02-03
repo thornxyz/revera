@@ -4,7 +4,6 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Input } from "@/components/ui/input";
 import {
     Dialog,
     DialogContent,
@@ -14,7 +13,7 @@ import {
     DialogTitle,
 } from "@/components/ui/dialog";
 import { Trash2 } from "lucide-react";
-import { listDocuments, uploadDocument, deleteDocument, Document } from "@/lib/api";
+import { listDocuments, deleteDocument, Document } from "@/lib/api";
 
 interface DocumentsPanelProps {
     onDocumentSelect?: (documentIds: string[]) => void;
@@ -25,7 +24,6 @@ export function DocumentsPanel({ onDocumentSelect, refreshToken }: DocumentsPane
     const [documents, setDocuments] = useState<Document[]>([]);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [isLoading, setIsLoading] = useState(false);
-    const [isUploading, setIsUploading] = useState(false);
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [confirmOpen, setConfirmOpen] = useState(false);
@@ -44,24 +42,6 @@ export function DocumentsPanel({ onDocumentSelect, refreshToken }: DocumentsPane
             setError("Failed to load documents");
         } finally {
             setIsLoading(false);
-        }
-    };
-
-    const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-
-        setIsUploading(true);
-        setError(null);
-
-        try {
-            const doc = await uploadDocument(file);
-            setDocuments((prev) => [doc, ...prev]);
-        } catch (err) {
-            setError(err instanceof Error ? err.message : "Upload failed");
-        } finally {
-            setIsUploading(false);
-            e.target.value = "";
         }
     };
 
@@ -111,29 +91,11 @@ export function DocumentsPanel({ onDocumentSelect, refreshToken }: DocumentsPane
 
     return (
         <div className="h-full flex flex-col">
-            <div className="p-4 border-b border-slate-200">
-                <h3 className="text-sm font-medium mb-3 text-slate-700">Documents</h3>
-                <label className="block">
-                    <Input
-                        type="file"
-                        accept=".pdf"
-                        onChange={handleUpload}
-                        disabled={isUploading}
-                        className="hidden"
-                        id="file-upload"
-                    />
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full border-slate-200 text-slate-600 hover:text-slate-700 hover:border-slate-300"
-                        disabled={isUploading}
-                        onClick={() => document.getElementById("file-upload")?.click()}
-                    >
-                        {isUploading ? "Uploading..." : "Upload PDF"}
-                    </Button>
-                </label>
-                {error && <p className="text-xs text-rose-600 mt-2">{error}</p>}
-            </div>
+            {error && (
+                <div className="p-4 border-b border-slate-200">
+                    <p className="text-xs text-rose-600">{error}</p>
+                </div>
+            )}
 
             <ScrollArea className="flex-1">
                 <div className="p-4 space-y-2">

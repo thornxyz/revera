@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Upload, Sparkles, Loader2, Brain } from "lucide-react";
+import { useState, useRef } from "react";
+import { Upload, Sparkles, Loader2, Brain, ChevronDown, ChevronUp, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,12 +11,12 @@ import { DocumentsPanel } from "@/components/documents-panel";
 import { UploadDialog } from "@/components/upload-dialog";
 import { SessionsSidebar } from "@/components/sessions-sidebar";
 import { AgentTimelinePanel } from "@/components/agent-timeline";
-import { research, getSession, researchStream, ResearchResponse, Source } from "@/lib/api";
+import { getSession, researchStream, ResearchResponse, Source } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { ResizableLayout } from "@/components/resizable-layout";
 import { LoginPage } from "@/components/login-page";
 import { StreamMarkdown } from "@/components/stream-markdown";
-import { AgentProgress } from "@/components/agent-progress";
+import { AgentProgress, ActivityLogItem } from "@/components/agent-progress";
 
 export default function ResearchPage() {
   const { user, loading, signOut } = useAuth();
@@ -40,8 +40,11 @@ export default function ResearchPage() {
   const [streamingAnswer, setStreamingAnswer] = useState("");
   const [streamingThoughts, setStreamingThoughts] = useState("");
   const [currentAgent, setCurrentAgent] = useState<string | null>(null);
-  const [completedAgents, setCompletedAgents] = useState<string[]>([]);
   const [streamingSources, setStreamingSources] = useState<Source[]>([]);
+  const [activityLog, setActivityLog] = useState<ActivityLogItem[]>([]);
+  const [isReasoningExpanded, setIsReasoningExpanded] = useState(true);
+  const streamStartTimeRef = useRef<Date>(new Date());
+  const activityLogCounterRef = useRef<number>(0);
 
   // Show loading state
   if (loading) {
@@ -65,8 +68,11 @@ export default function ResearchPage() {
     setStreamingAnswer("");
     setStreamingThoughts("");
     setCurrentAgent(null);
-    setCompletedAgents([]);
     setStreamingSources([]);
+    setActivityLog([]);
+    setIsReasoningExpanded(true);
+    streamStartTimeRef.current = new Date();
+    activityLogCounterRef.current = 0;
     setError(null);
     setResult(null);
 
@@ -81,8 +87,25 @@ export default function ResearchPage() {
         {
           onAgentStatus: (node, status) => {
             if (status === "complete") {
-              setCompletedAgents((prev) => [...prev, node]);
               setCurrentAgent(null);
+              // Add to activity log
+              const agentMessages: Record<string, string> = {
+                planning: "Strategy determined",
+                retrieval: "Internal documents searched",
+                web_search: "External sources fetched",
+                synthesis: "Response drafted",
+                critic: "Claims verified",
+              };
+              setActivityLog((prev) => [
+                ...prev,
+                {
+                  id: `${node}-${activityLogCounterRef.current++}`,
+                  timestamp: new Date(),
+                  agent: node,
+                  status: "complete",
+                  message: agentMessages[node] || "Step completed",
+                },
+              ]);
             } else {
               setCurrentAgent(node);
             }
@@ -105,7 +128,7 @@ export default function ResearchPage() {
             setResult({
               session_id: data.session_id,
               query: currentQuery,
-              answer: "", // Will use streamingAnswer instead
+              answer: streamingAnswer, // Use the accumulated streaming answer
               sources: finalSources,
               verification: data.verification || {
                 verification_status: data.confidence || "unknown",
@@ -119,10 +142,13 @@ export default function ResearchPage() {
             });
             setCurrentSessionId(data.session_id);
             setIsStreaming(false);
+            setIsLoading(false); // Ensure loading state is cleared
           },
           onError: (message) => {
             setError(message);
             setIsStreaming(false);
+            setIsLoading(false);
+            setCurrentAgent(null);
           },
         }
       );
@@ -449,27 +475,43 @@ export default function ResearchPage() {
             {/* Streaming Content */}
             {isStreaming && (
               <div className="space-y-6 max-w-5xl mx-auto">
-                {/* Agent Progress */}
+                {/* Agent Progress - Activity Feed */}
                 <AgentProgress
-                  completedAgents={completedAgents}
+                  activityLog={activityLog}
                   currentAgent={currentAgent}
                 />
 
-                {/* Streaming Thoughts */}
+                {/* Collapsible Reasoning/Chain of Thought */}
                 {streamingThoughts && (
-                  <Card className="bg-slate-50/80 border-slate-200 backdrop-blur-sm overflow-hidden">
-                    <CardHeader className="py-3 bg-slate-100/50 border-b border-slate-200/50">
-                      <CardTitle className="text-sm font-medium text-slate-600 flex items-center gap-2">
+                  <div className="bg-slate-50/80 border border-slate-200 backdrop-blur-sm rounded-xl overflow-hidden">
+                    <button
+                      onClick={() => setIsReasoningExpanded(!isReasoningExpanded)}
+                      className="w-full px-4 py-3 bg-slate-100/50 border-b border-slate-200/50 flex items-center justify-between hover:bg-slate-100 transition-colors"
+                    >
+                      <div className="flex items-center gap-2">
                         <Brain className="h-4 w-4 text-violet-500" />
-                        Reasoning Process
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="pt-3 max-h-60 overflow-y-auto">
-                      <p className="text-xs font-mono text-slate-600 whitespace-pre-wrap leading-relaxed">
-                        {streamingThoughts}
-                      </p>
-                    </CardContent>
-                  </Card>
+                        <span className="text-sm font-medium text-slate-600">
+                          Internal Monologue
+                        </span>
+                        <span className="text-xs text-slate-400">
+                          (Chain of Thought)
+                        </span>
+                      </div>
+                      {isReasoningExpanded ? (
+                        <ChevronUp className="h-4 w-4 text-slate-400" />
+                      ) : (
+                        <ChevronDown className="h-4 w-4 text-slate-400" />
+                      )}
+                    </button>
+                    {isReasoningExpanded && (
+                      <div className="p-4 max-h-60 overflow-y-auto">
+                        <p className="text-xs font-mono text-slate-600 whitespace-pre-wrap leading-relaxed">
+                          {streamingThoughts}
+                          <span className="inline-block w-1.5 h-4 bg-violet-400 animate-pulse ml-0.5 align-middle" />
+                        </p>
+                      </div>
+                    )}
+                  </div>
                 )}
 
                 {/* Streaming Answer */}
@@ -490,6 +532,24 @@ export default function ResearchPage() {
                       />
                     </CardContent>
                   </Card>
+                )}
+
+                {/* Streaming Sources (show as they arrive) */}
+                {streamingSources.length > 0 && (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-lg font-semibold text-slate-700 flex items-center gap-2">
+                        <FileText className="h-5 w-5 text-emerald-500" />
+                        Sources
+                        <Badge variant="secondary" className="ml-2 bg-slate-100 text-slate-600">
+                          {streamingSources.length}
+                        </Badge>
+                      </h3>
+                    </div>
+                    {streamingSources.map((source, i) => (
+                      <SourceCard key={i} source={source} index={i + 1} />
+                    ))}
+                  </div>
                 )}
               </div>
             )}

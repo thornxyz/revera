@@ -28,14 +28,18 @@ export async function updateSession(request: NextRequest) {
     )
 
     // Do not run code between createServerClient and
-    // supabase.auth.getClaims(). A simple mistake could make it very hard to debug
+    // supabase.auth.getUser(). A simple mistake could make it very hard to debug
     // issues with users being randomly logged out.
 
-    // IMPORTANT: If you remove getClaims() and you use server-side rendering
-    // with the Supabase client, your users may be randomly logged out.
-    const { data } = await supabase.auth.getClaims()
+    // IMPORTANT: Avoid using getClaims() directly as it throws when JWT is expired.
+    // Use getUser() instead - it automatically refreshes expired tokens and handles
+    // the session renewal gracefully.
+    const { data: { user }, error } = await supabase.auth.getUser()
 
-    const user = data?.claims
+    // If there's an auth error (e.g., refresh token also expired), treat as unauthenticated
+    if (error) {
+        console.warn('Auth error during session update:', error.message)
+    }
 
     // Allow unauthenticated access to root and auth callback
     // The root page will handle showing login UI if needed
