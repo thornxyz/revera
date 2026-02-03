@@ -109,8 +109,8 @@ Perform thorough verification:
 
 Output verification results in JSON format."""
 
-        # Run verification
-        response = self.gemini.generate_json(
+        # Run verification with async method (respects asyncio cancellation)
+        response = await self.gemini.generate_json_async(
             prompt=prompt,
             system_instruction=CRITIC_SYSTEM_PROMPT,
             temperature=0.1,  # Lower for more consistent verification

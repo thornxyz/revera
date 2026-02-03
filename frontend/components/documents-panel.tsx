@@ -16,11 +16,12 @@ import { Trash2 } from "lucide-react";
 import { listDocuments, deleteDocument, Document } from "@/lib/api";
 
 interface DocumentsPanelProps {
+    chatId: string | null;
     onDocumentSelect?: (documentIds: string[]) => void;
     refreshToken?: number;
 }
 
-export function DocumentsPanel({ onDocumentSelect, refreshToken }: DocumentsPanelProps) {
+export function DocumentsPanel({ chatId, onDocumentSelect, refreshToken }: DocumentsPanelProps) {
     const [documents, setDocuments] = useState<Document[]>([]);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [isLoading, setIsLoading] = useState(false);
@@ -30,13 +31,20 @@ export function DocumentsPanel({ onDocumentSelect, refreshToken }: DocumentsPane
     const [pendingDelete, setPendingDelete] = useState<Document | null>(null);
 
     useEffect(() => {
-        fetchDocuments();
-    }, [refreshToken]);
+        if (chatId) {
+            fetchDocuments();
+        } else {
+            setDocuments([]);
+            setSelectedIds(new Set());
+        }
+    }, [refreshToken, chatId]);
 
     const fetchDocuments = async () => {
+        if (!chatId) return;
+        
         setIsLoading(true);
         try {
-            const data = await listDocuments();
+            const data = await listDocuments(chatId);
             setDocuments(data.documents);
         } catch (err) {
             setError("Failed to load documents");
@@ -91,70 +99,80 @@ export function DocumentsPanel({ onDocumentSelect, refreshToken }: DocumentsPane
 
     return (
         <div className="h-full flex flex-col">
-            {error && (
-                <div className="p-4 border-b border-slate-200">
-                    <p className="text-xs text-rose-600">{error}</p>
+            {!chatId ? (
+                <div className="flex items-center justify-center h-full p-4 text-center text-slate-500">
+                    <div className="space-y-2">
+                        <p className="text-sm">Select or create a chat to manage documents</p>
+                    </div>
                 </div>
-            )}
-
-            <ScrollArea className="flex-1">
-                <div className="p-4 space-y-2">
-                    {isLoading ? (
-                        <p className="text-sm text-slate-500">Loading...</p>
-                    ) : documents.length === 0 ? (
-                        <p className="text-sm text-slate-500">No documents uploaded</p>
-                    ) : (
-                        documents.map((doc) => (
-                            <Card
-                                key={doc.id}
-                                className={`group cursor-pointer transition-all ${selectedIds.has(doc.id)
-                                    ? "bg-emerald-50 border-emerald-200"
-                                    : "bg-white/80 border-slate-200 hover:border-slate-300"
-                                    }`}
-                                onClick={() => toggleSelect(doc.id)}
-                            >
-                                <CardContent className="p-3">
-                                    <div className="flex items-start gap-2">
-                                        <span className="text-lg">📄</span>
-                                        <div className="flex-1 min-w-0">
-                                            <p
-                                                className="text-sm font-medium leading-snug whitespace-normal break-words"
-                                                title={doc.filename}
-                                            >
-                                                {doc.filename}
-                                            </p>
-                                            <p className="text-xs text-slate-500">
-                                                {new Date(doc.created_at).toLocaleDateString()}
-                                            </p>
-                                        </div>
-                                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                className="h-8 w-8 text-slate-400 hover:text-rose-500 hover:bg-rose-50"
-                                                onClick={(e) => requestDelete(e, doc)}
-                                                disabled={deletingId === doc.id}
-                                            >
-                                                <Trash2 className="h-4 w-4" />
-                                            </Button>
-                                            {selectedIds.has(doc.id) && (
-                                                <span className="text-emerald-600 mr-1">✓</span>
-                                            )}
-                                        </div>
-                                    </div>
-                                </CardContent>
-                            </Card>
-                        ))
+            ) : (
+                <>
+                    {error && (
+                        <div className="p-4 border-b border-slate-200">
+                            <p className="text-xs text-rose-600">{error}</p>
+                        </div>
                     )}
-                </div>
-            </ScrollArea>
 
-            {selectedIds.size > 0 && (
-                <div className="p-4 border-t border-slate-200">
-                    <p className="text-xs text-slate-500">
-                        {selectedIds.size} document{selectedIds.size > 1 ? "s" : ""} selected
-                    </p>
-                </div>
+                    <ScrollArea className="flex-1">
+                        <div className="p-4 space-y-2">
+                            {isLoading ? (
+                                <p className="text-sm text-slate-500">Loading...</p>
+                            ) : documents.length === 0 ? (
+                                <p className="text-sm text-slate-500">No documents uploaded</p>
+                            ) : (
+                                documents.map((doc) => (
+                                    <Card
+                                        key={doc.id}
+                                        className={`group cursor-pointer transition-all ${selectedIds.has(doc.id)
+                                            ? "bg-emerald-50 border-emerald-200"
+                                            : "bg-white/80 border-slate-200 hover:border-slate-300"
+                                            }`}
+                                        onClick={() => toggleSelect(doc.id)}
+                                    >
+                                        <CardContent className="p-3">
+                                            <div className="flex items-start gap-2">
+                                                <span className="text-lg">📄</span>
+                                                <div className="flex-1 min-w-0">
+                                                    <p
+                                                        className="text-sm font-medium leading-snug whitespace-normal break-words"
+                                                        title={doc.filename}
+                                                    >
+                                                        {doc.filename}
+                                                    </p>
+                                                    <p className="text-xs text-slate-500">
+                                                        {new Date(doc.created_at).toLocaleDateString()}
+                                                    </p>
+                                                </div>
+                                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="h-8 w-8 text-slate-400 hover:text-rose-500 hover:bg-rose-50"
+                                                        onClick={(e) => requestDelete(e, doc)}
+                                                        disabled={deletingId === doc.id}
+                                                    >
+                                                        <Trash2 className="h-4 w-4" />
+                                                    </Button>
+                                                    {selectedIds.has(doc.id) && (
+                                                        <span className="text-emerald-600 mr-1">✓</span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </CardContent>
+                                    </Card>
+                                ))
+                            )}
+                        </div>
+                    </ScrollArea>
+
+                    {selectedIds.size > 0 && (
+                        <div className="p-4 border-t border-slate-200">
+                            <p className="text-xs text-slate-500">
+                                {selectedIds.size} document{selectedIds.size > 1 ? "s" : ""} selected
+                            </p>
+                        </div>
+                    )}
+                </>
             )}
 
             <Dialog open={confirmOpen} onOpenChange={(open) => !open && closeConfirm()}>
@@ -162,7 +180,7 @@ export function DocumentsPanel({ onDocumentSelect, refreshToken }: DocumentsPane
                     <DialogHeader>
                         <DialogTitle>Delete document?</DialogTitle>
                         <DialogDescription className="text-slate-500">
-                            This removes the document from your workspace. This action cannot be undone.
+                            This removes the document from this chat. This action cannot be undone.
                         </DialogDescription>
                     </DialogHeader>
                     {pendingDelete && (

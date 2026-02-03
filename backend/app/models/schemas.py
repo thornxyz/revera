@@ -88,3 +88,75 @@ class AgentLog(AgentLogBase):
 
     class Config:
         from_attributes = True
+
+
+# ============================================
+# Chat Models (Multi-Turn Conversations)
+# ============================================
+
+
+class ChatBase(BaseModel):
+    """Base chat model."""
+
+    title: str | None = None
+
+
+class ChatCreate(ChatBase):
+    """Model for creating a chat."""
+
+    pass
+
+
+class Chat(ChatBase):
+    """Full chat model."""
+
+    id: UUID
+    user_id: UUID
+    thread_id: str | None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ChatWithPreview(Chat):
+    """Chat with message preview for list views."""
+
+    last_message_preview: str | None = None
+    message_count: int = 0
+
+
+# ============================================
+# Message Models
+# ============================================
+
+
+class MessageBase(BaseModel):
+    """Base message model."""
+
+    query: str
+
+
+class MessageCreate(MessageBase):
+    """Model for creating a message."""
+
+    pass
+
+
+class Message(MessageBase):
+    """Full message model."""
+
+    id: UUID
+    chat_id: UUID
+    session_id: UUID | None
+    query: str
+    answer: str | None
+    role: str  # 'user' or 'assistant'
+    sources: list[dict] = Field(default_factory=list)
+    verification: dict | None = None
+    confidence: str | None = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

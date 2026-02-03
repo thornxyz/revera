@@ -14,11 +14,12 @@ import { uploadDocument } from "@/lib/api";
 
 interface UploadDialogProps {
     open: boolean;
+    chatId: string | null;
     onOpenChange: (open: boolean) => void;
     onUploadSuccess?: () => void;
 }
 
-export function UploadDialog({ open, onOpenChange, onUploadSuccess }: UploadDialogProps) {
+export function UploadDialog({ open, chatId, onOpenChange, onUploadSuccess }: UploadDialogProps) {
     const [file, setFile] = useState<File | null>(null);
     const [uploading, setUploading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -43,13 +44,13 @@ export function UploadDialog({ open, onOpenChange, onUploadSuccess }: UploadDial
     };
 
     const handleUpload = async () => {
-        if (!file) return;
+        if (!file || !chatId) return;
 
         setUploading(true);
         setError(null);
 
         try {
-            await uploadDocument(file);
+            await uploadDocument(file, chatId);
             setSuccess(true);
             setTimeout(() => {
                 onUploadSuccess?.();
@@ -79,7 +80,7 @@ export function UploadDialog({ open, onOpenChange, onUploadSuccess }: UploadDial
                         Upload Document
                     </DialogTitle>
                     <DialogDescription className="text-slate-500">
-                        Upload a PDF document to add to your research knowledge base.
+                        Upload a PDF document to add to this chat&apos;s knowledge base.
                     </DialogDescription>
                 </DialogHeader>
 

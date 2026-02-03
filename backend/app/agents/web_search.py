@@ -259,7 +259,7 @@ class WebSearchAgent(BaseAgent):
                 # Boost recent content for temporal queries
                 if query_type == "temporal" and source.date:
                     # Simple recency boost (last 30 days get +0.1)
-                    from datetime import datetime, timedelta
+                    from datetime import datetime
 
                     try:
                         pub_date = datetime.fromisoformat(

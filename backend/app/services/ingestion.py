@@ -49,6 +49,7 @@ class IngestionService:
         file_content: bytes,
         filename: str,
         user_id: UUID,
+        chat_id: UUID | None = None,
     ) -> UUID:
         """
         Ingest a PDF file: parse, chunk, embed (Triple Vectors), and store in Qdrant.
@@ -57,17 +58,15 @@ class IngestionService:
         """
         # 1. Create document record in Supabase (Metadata Source of Truth)
         try:
-            doc_result = (
-                self.supabase.table("documents")
-                .insert(
-                    {
-                        "user_id": str(user_id),
-                        "filename": filename,
-                        "metadata": {"type": "pdf"},
-                    }
-                )
-                .execute()
-            )
+            doc_data = {
+                "user_id": str(user_id),
+                "filename": filename,
+                "metadata": {"type": "pdf"},
+            }
+            if chat_id:
+                doc_data["chat_id"] = str(chat_id)
+
+            doc_result = self.supabase.table("documents").insert(doc_data).execute()
         except Exception:
             logger.exception(
                 "[INGEST] Failed to create document record",

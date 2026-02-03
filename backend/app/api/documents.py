@@ -1,7 +1,7 @@
 """Documents API routes."""
 
 import logging
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from pydantic import BaseModel
 from uuid import UUID
 
@@ -18,6 +18,7 @@ class DocumentResponse(BaseModel):
 
     id: str
     filename: str
+    chat_id: str | None
     created_at: str
 
 
@@ -31,17 +32,33 @@ class DocumentListResponse(BaseModel):
 @router.post("/upload", response_model=DocumentResponse)
 async def upload_document(
     file: UploadFile = File(...),
+    chat_id: str = Query(..., description="Chat ID to associate document with"),
     user_id: str = Depends(get_current_user_id),
 ):
     """
-    Upload and ingest a PDF document.
+    Upload and ingest a PDF document (chat-scoped).
 
     The document will be:
     1. Parsed and text extracted
     2. Split into chunks
     3. Embedded using Gemini
     4. Stored in the vector database
+    5. Linked to the specified chat
     """
+    # Validate chat ownership
+    from app.core.database import get_supabase_client
+
+    supabase = get_supabase_client()
+    chat_check = (
+        supabase.table("chats")
+        .select("id")
+        .eq("id", chat_id)
+        .eq("user_id", user_id)
+        .execute()
+    )
+    if not chat_check.data:
+        raise HTTPException(status_code=404, detail="Chat not found")
+
     # Validate filename exists
     if not file.filename:
         raise HTTPException(status_code=400, detail="File must have a filename")
@@ -63,6 +80,7 @@ async def upload_document(
             extra={
                 "doc_filename": file.filename,
                 "doc_user_id": user_id,
+                "doc_chat_id": chat_id,
                 "doc_bytes": content_len,
             },
         )
@@ -71,12 +89,10 @@ async def upload_document(
             file_content=content,
             filename=file.filename,
             user_id=UUID(user_id),
+            chat_id=UUID(chat_id),
         )
 
         # Get document details
-        from app.core.database import get_supabase_client
-
-        supabase = get_supabase_client()
         doc = (
             supabase.table("documents")
             .select("*")
@@ -85,10 +101,12 @@ async def upload_document(
             .execute()
         )
 
+        doc_data = doc.data if doc.data else {}
         return DocumentResponse(
             id=str(document_id),
-            filename=doc.data["filename"],  # type: ignore
-            created_at=doc.data["created_at"],  # type: ignore
+            filename=str(doc_data.get("filename", "")),
+            chat_id=str(doc_data.get("chat_id")) if doc_data.get("chat_id") else None,
+            created_at=str(doc_data.get("created_at", "")),
         )
     except Exception as e:
         logger.exception(
@@ -96,6 +114,7 @@ async def upload_document(
             extra={
                 "doc_filename": file.filename,
                 "doc_user_id": user_id,
+                "doc_chat_id": chat_id,
                 "doc_bytes": content_len,
             },
         )
@@ -104,30 +123,35 @@ async def upload_document(
 
 @router.get("/", response_model=DocumentListResponse)
 async def list_documents(
+    chat_id: str | None = Query(None, description="Filter documents by chat ID"),
     user_id: str = Depends(get_current_user_id),
 ):
-    """List all documents for the current user."""
+    """List documents for the current user, optionally filtered by chat."""
     from app.core.database import get_supabase_client
 
     supabase = get_supabase_client()
-    result = (
-        supabase.table("documents")
-        .select("*")
-        .eq("user_id", user_id)
-        .order("created_at", desc=True)
-        .execute()
-    )
 
+    # Build query
+    query = supabase.table("documents").select("*").eq("user_id", user_id)
+
+    # Apply chat filter if provided
+    if chat_id:
+        query = query.eq("chat_id", chat_id)
+
+    result = query.order("created_at", desc=True).execute()
+
+    documents_data = result.data or []
     return DocumentListResponse(
         documents=[
             DocumentResponse(
-                id=str(doc.get("id", "")),  # type: ignore
-                filename=str(doc.get("filename", "")),  # type: ignore
-                created_at=str(doc.get("created_at", "")),  # type: ignore
+                id=str(doc.get("id", "")),
+                filename=str(doc.get("filename", "")),
+                chat_id=str(doc.get("chat_id")) if doc.get("chat_id") else None,
+                created_at=str(doc.get("created_at", "")),
             )
-            for doc in (result.data or [])  # type: ignore
+            for doc in documents_data
         ],
-        total=len(result.data or []),  # type: ignore
+        total=len(documents_data),
     )
 
 

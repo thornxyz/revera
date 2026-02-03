@@ -17,12 +17,21 @@ logger = logging.getLogger(__name__)
 class GeminiClient:
     """Wrapper for Google Gemini API."""
 
-    def __init__(self):
+    def __init__(self, timeout: int = 120):
+        """
+        Initialize Gemini client.
+
+        Args:
+            timeout: Request timeout in seconds (default: 120)
+        """
         settings = get_settings()
+        # Note: genai.Client doesn't support timeout in constructor
+        # Timeout must be set at request level via http_options
         self.client = genai.Client(api_key=settings.gemini_api_key)
         self.embedding_model = GEMINI_EMBEDDING_MODEL
         self.model = GEMINI_MODEL
         self.thinking_level = GEMINI_THINKING_LEVEL
+        self.default_timeout = timeout
 
     def embed_text(self, text: str) -> list[float]:
         """Generate embedding for a single text."""
@@ -105,9 +114,74 @@ class GeminiClient:
         system_instruction: str | None = None,
         temperature: float = 0.3,
         max_tokens: int | None = None,
+        timeout: int | None = None,
     ) -> str:
         """
         Generate structured JSON response.
+
+        Args:
+            prompt: The user prompt
+            system_instruction: Optional system instruction
+            temperature: Sampling temperature (0.0-1.0)
+            max_tokens: Maximum output tokens
+            timeout: Request timeout in seconds (overrides default)
+
+        Returns:
+            Raw response text (should be valid JSON)
+        """
+        config = types.GenerateContentConfig(
+            temperature=temperature,
+            response_mime_type="application/json",
+        )
+
+        if max_tokens is not None:
+            config.max_output_tokens = max_tokens
+
+        if system_instruction:
+            config.system_instruction = system_instruction
+
+        try:
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config=config,
+            )
+
+            response_text = response.text or ""
+
+            # Log response metadata for monitoring
+            response_length = len(response_text)
+            logger.debug(
+                f"[Gemini] JSON generation complete. "
+                f"Length: {response_length} chars, "
+                f"Temperature: {temperature}"
+            )
+
+            # Validate response is not empty
+            if not response_text.strip():
+                logger.warning("[Gemini] Received empty response from model")
+                return "{}"
+
+            # Log preview of response for debugging (only first 300 chars)
+            if logger.isEnabledFor(logging.DEBUG):
+                preview = response_text[:300] + ("..." if response_length > 300 else "")
+                logger.debug(f"[Gemini] Response preview: {preview}")
+
+            return response_text
+
+        except Exception as e:
+            logger.error(f"[Gemini] Error generating JSON response: {e}", exc_info=True)
+            raise
+
+    async def generate_json_async(
+        self,
+        prompt: str,
+        system_instruction: str | None = None,
+        temperature: float = 0.3,
+        max_tokens: int | None = None,
+    ) -> str:
+        """
+        Generate structured JSON response asynchronously (respects asyncio.wait_for timeout).
 
         Args:
             prompt: The user prompt
@@ -130,7 +204,8 @@ class GeminiClient:
             config.system_instruction = system_instruction
 
         try:
-            response = self.client.models.generate_content(
+            # Use async API which properly respects asyncio cancellation
+            response = await self.client.aio.models.generate_content(
                 model=self.model,
                 contents=prompt,
                 config=config,
