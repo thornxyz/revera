@@ -1,11 +1,14 @@
 """Documents API routes."""
 
 import logging
+import uuid
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from pydantic import BaseModel
 from uuid import UUID
 
 from app.services.ingestion import get_ingestion_service
+from app.services.title_generator import generate_title_from_filename
 from app.core.auth import get_current_user_id
 
 
@@ -32,7 +35,10 @@ class DocumentListResponse(BaseModel):
 @router.post("/upload", response_model=DocumentResponse)
 async def upload_document(
     file: UploadFile = File(...),
-    chat_id: str = Query(..., description="Chat ID to associate document with"),
+    chat_id: str | None = Query(
+        None,
+        description="Chat ID to associate document with (auto-creates if not provided)",
+    ),
     user_id: str = Depends(get_current_user_id),
 ):
     """
@@ -43,21 +49,57 @@ async def upload_document(
     2. Split into chunks
     3. Embedded using Gemini
     4. Stored in the vector database
-    5. Linked to the specified chat
+    5. Linked to the specified chat (or auto-created chat)
+
+    If no chat_id is provided, a new chat will be automatically created
+    with a title based on the filename.
     """
-    # Validate chat ownership
     from app.core.database import get_supabase_client
 
     supabase = get_supabase_client()
-    chat_check = (
-        supabase.table("chats")
-        .select("id")
-        .eq("id", chat_id)
-        .eq("user_id", user_id)
-        .execute()
-    )
-    if not chat_check.data:
-        raise HTTPException(status_code=404, detail="Chat not found")
+
+    # Auto-create chat if not provided
+    if not chat_id:
+        # Generate title from filename
+        chat_title = generate_title_from_filename(file.filename or "document.pdf")
+
+        # Create new chat
+        new_chat_id = str(uuid.uuid4())
+        thread_id = f"chat-{new_chat_id}"
+
+        logger.info(
+            f"[DOC_UPLOAD] Auto-creating chat for document upload: title='{chat_title}'"
+        )
+
+        new_chat = (
+            supabase.table("chats")
+            .insert(
+                {
+                    "id": new_chat_id,
+                    "user_id": user_id,
+                    "title": chat_title,
+                    "thread_id": thread_id,
+                }
+            )
+            .execute()
+        )
+
+        if not new_chat.data:
+            raise HTTPException(status_code=500, detail="Failed to create chat")
+
+        chat_id = new_chat_id
+        logger.info(f"[DOC_UPLOAD] Created chat {chat_id} with title: {chat_title}")
+    else:
+        # Validate chat ownership if chat_id was provided
+        chat_check = (
+            supabase.table("chats")
+            .select("id")
+            .eq("id", chat_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+        if not chat_check.data:
+            raise HTTPException(status_code=404, detail="Chat not found")
 
     # Validate filename exists
     if not file.filename:

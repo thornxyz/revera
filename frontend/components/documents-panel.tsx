@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -46,8 +47,13 @@ export function DocumentsPanel({ chatId, onDocumentSelect, refreshToken }: Docum
         try {
             const data = await listDocuments(chatId);
             setDocuments(data.documents);
+            setError(null);
         } catch (err) {
-            setError("Failed to load documents");
+            const errorMessage = "Failed to load documents";
+            setError(errorMessage);
+            toast.error("Failed to load documents", {
+                description: err instanceof Error ? err.message : "Please try again",
+            });
         } finally {
             setIsLoading(false);
         }
@@ -72,8 +78,15 @@ export function DocumentsPanel({ chatId, onDocumentSelect, refreshToken }: Docum
                 setSelectedIds(newSelected);
                 onDocumentSelect?.(Array.from(newSelected));
             }
+            toast.success("Document deleted", {
+                description: `${pendingDelete.filename} has been removed`,
+            });
         } catch (err) {
-            setError("Failed to delete document");
+            const errorMessage = "Failed to delete document";
+            setError(errorMessage);
+            toast.error("Failed to delete document", {
+                description: err instanceof Error ? err.message : "Please try again",
+            });
         } finally {
             setDeletingId(null);
             setConfirmOpen(false);

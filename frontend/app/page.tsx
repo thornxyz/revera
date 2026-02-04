@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Upload, Sparkles, Loader2, Brain, ChevronDown, ChevronUp, Send } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
@@ -12,12 +13,12 @@ import { UploadDialog } from "@/components/upload-dialog";
 import { ChatsSidebar } from "@/components/chats-sidebar";
 import { MessageList } from "@/components/message-list";
 import { AgentTimelinePanel } from "@/components/agent-timeline";
-import { 
-  createChat, 
-  getChatMessages, 
-  sendChatMessageStream, 
-  Message, 
-  Source 
+import {
+  createChat,
+  getChatMessages,
+  sendChatMessageStream,
+  Message,
+  Source
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { ResizableLayout } from "@/components/resizable-layout";
@@ -37,6 +38,7 @@ export default function ResearchPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const [documentsRefreshToken, setDocumentsRefreshToken] = useState(0);
+  const [chatsRefreshToken, setChatsRefreshToken] = useState(0);
 
   // Streaming State
   const [isStreaming, setIsStreaming] = useState(false);
@@ -98,8 +100,14 @@ export default function ResearchPage() {
         const newChat = await createChat();
         chatId = newChat.id;
         setCurrentChatId(chatId);
+        toast.success("New chat created", {
+          description: "Ready to start your research",
+        });
       } catch (err) {
         setError("Failed to create chat");
+        toast.error("Failed to create chat", {
+          description: err instanceof Error ? err.message : "Please try again",
+        });
         return;
       }
     }
@@ -165,6 +173,12 @@ export default function ResearchPage() {
           onSources: (sources) => {
             setStreamingSources((prev) => [...prev, ...sources]);
           },
+          onTitleUpdated: (title, chatId) => {
+            // Update chat title in sidebar
+            if ((window as any).updateChatTitle) {
+              (window as any).updateChatTitle(chatId, title);
+            }
+          },
           onComplete: (data) => {
             // Streaming complete - refresh messages
             if (chatId) {
@@ -175,19 +189,32 @@ export default function ResearchPage() {
             setStreamingAnswer("");
             setStreamingThoughts("");
             setStreamingSources([]);
+
+            // Show success notification
+            const duration = ((new Date().getTime() - streamStartTimeRef.current.getTime()) / 1000).toFixed(1);
+            toast.success("Research complete", {
+              description: `Answer generated in ${duration}s with ${data.sources?.length || 0} sources`,
+            });
           },
           onError: (message) => {
             setError(message);
             setIsStreaming(false);
             setIsLoading(false);
             setCurrentAgent(null);
+            toast.error("Research failed", {
+              description: message,
+            });
           },
         }
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Research failed");
+      const errorMessage = err instanceof Error ? err.message : "Research failed";
+      setError(errorMessage);
       setIsStreaming(false);
       setIsLoading(false);
+      toast.error("Research failed", {
+        description: errorMessage,
+      });
     }
   };
 
@@ -206,7 +233,7 @@ export default function ResearchPage() {
     setError(null);
     setMessages([]);
     setIsLoading(true);
-    
+
     try {
       await loadChatMessages(chatId);
     } catch (err) {
@@ -242,31 +269,28 @@ export default function ResearchPage() {
             <div className="flex border-b border-slate-200/70 bg-white/80">
               <button
                 onClick={() => setActiveTab("chat")}
-                className={`flex-1 py-3 text-sm font-medium transition-colors ${
-                  activeTab === "chat"
+                className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === "chat"
                     ? "text-emerald-700 border-b-2 border-emerald-500 bg-emerald-50"
                     : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
-                }`}
+                  }`}
               >
                 Chats
               </button>
               <button
                 onClick={() => setActiveTab("documents")}
-                className={`flex-1 py-3 text-sm font-medium transition-colors ${
-                  activeTab === "documents"
+                className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === "documents"
                     ? "text-emerald-700 border-b-2 border-emerald-500 bg-emerald-50"
                     : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
-                }`}
+                  }`}
               >
                 Documents
               </button>
               <button
                 onClick={() => setActiveTab("timeline")}
-                className={`flex-1 py-3 text-sm font-medium transition-colors ${
-                  activeTab === "timeline"
+                className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === "timeline"
                     ? "text-emerald-700 border-b-2 border-emerald-500 bg-emerald-50"
                     : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
-                }`}
+                  }`}
               >
                 Timeline
               </button>
@@ -277,6 +301,7 @@ export default function ResearchPage() {
               {activeTab === "chat" ? (
                 <ChatsSidebar
                   currentChatId={currentChatId}
+                  refreshToken={chatsRefreshToken}
                   onChatSelect={handleChatSelect}
                   onNewChat={handleNewChat}
                 />
@@ -285,17 +310,11 @@ export default function ResearchPage() {
                   <div className="p-4 border-b border-slate-200/70">
                     <Button
                       onClick={() => setUploadDialogOpen(true)}
-                      disabled={!currentChatId}
-                      className="w-full bg-linear-to-r from-emerald-500 to-teal-500 hover:from-emerald-500 hover:to-teal-400 shadow-sm shadow-emerald-500/20 disabled:opacity-50"
+                      className="w-full bg-linear-to-r from-emerald-500 to-teal-500 hover:from-emerald-500 hover:to-teal-400 shadow-sm shadow-emerald-500/20"
                     >
                       <Upload className="h-4 w-4 mr-2" />
                       Upload Document
                     </Button>
-                    {!currentChatId && (
-                      <p className="text-xs text-slate-500 mt-2 text-center">
-                        Select or create a chat first
-                      </p>
-                    )}
                   </div>
                   <div className="flex-1 overflow-hidden">
                     <DocumentsPanel
@@ -443,7 +462,7 @@ export default function ResearchPage() {
                         </CardContent>
                       </Card>
                     )}
-                    
+
                     {/* Invisible marker for auto-scroll during streaming */}
                     <div ref={streamingEndRef} />
                   </div>
@@ -497,6 +516,12 @@ export default function ResearchPage() {
           onOpenChange={setUploadDialogOpen}
           onUploadSuccess={() => {
             setDocumentsRefreshToken((prev) => prev + 1);
+          }}
+          onChatCreated={(newChatId, title) => {
+            // Refresh chat list and set as active
+            setChatsRefreshToken((prev) => prev + 1);
+            setCurrentChatId(newChatId);
+            // Note: Toast will be shown when we implement sonner
           }}
         />
       </ResizableLayout>

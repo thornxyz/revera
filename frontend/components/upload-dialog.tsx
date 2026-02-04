@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Upload, File, X, CheckCircle, AlertCircle } from "lucide-react";
+import { toast } from "sonner";
 import {
     Dialog,
     DialogContent,
@@ -17,9 +18,10 @@ interface UploadDialogProps {
     chatId: string | null;
     onOpenChange: (open: boolean) => void;
     onUploadSuccess?: () => void;
+    onChatCreated?: (chatId: string, title: string) => void;
 }
 
-export function UploadDialog({ open, chatId, onOpenChange, onUploadSuccess }: UploadDialogProps) {
+export function UploadDialog({ open, chatId, onOpenChange, onUploadSuccess, onChatCreated }: UploadDialogProps) {
     const [file, setFile] = useState<File | null>(null);
     const [uploading, setUploading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -31,11 +33,17 @@ export function UploadDialog({ open, chatId, onOpenChange, onUploadSuccess }: Up
             // Validate file type
             if (!selectedFile.name.toLowerCase().endsWith('.pdf')) {
                 setError("Only PDF files are supported");
+                toast.error("Invalid file type", {
+                    description: "Only PDF files are supported",
+                });
                 return;
             }
             // Validate file size (50MB limit)
             if (selectedFile.size > 50 * 1024 * 1024) {
                 setError("File size must be less than 50MB");
+                toast.error("File too large", {
+                    description: "Maximum file size is 50MB",
+                });
                 return;
             }
             setFile(selectedFile);
@@ -44,20 +52,39 @@ export function UploadDialog({ open, chatId, onOpenChange, onUploadSuccess }: Up
     };
 
     const handleUpload = async () => {
-        if (!file || !chatId) return;
+        if (!file) return;
 
         setUploading(true);
         setError(null);
 
         try {
-            await uploadDocument(file, chatId);
+            // Upload with optional chatId (backend will auto-create if not provided)
+            const result = await uploadDocument(file, chatId || undefined);
+            
+            // If chat was auto-created, notify parent
+            if (!chatId && result.chat_id) {
+                onChatCreated?.(result.chat_id, result.filename);
+                toast.success("New chat created", {
+                    description: `Chat created with: ${result.filename.replace(/\.pdf$/i, '')}`,
+                });
+            } else {
+                // Regular upload to existing chat
+                toast.success("Document uploaded", {
+                    description: `${result.filename} has been processed and indexed`,
+                });
+            }
+            
             setSuccess(true);
             setTimeout(() => {
                 onUploadSuccess?.();
                 handleClose();
             }, 1500);
         } catch (err) {
-            setError(err instanceof Error ? err.message : "Upload failed");
+            const errorMessage = err instanceof Error ? err.message : "Upload failed";
+            setError(errorMessage);
+            toast.error("Upload failed", {
+                description: errorMessage,
+            });
         } finally {
             setUploading(false);
         }
@@ -80,7 +107,10 @@ export function UploadDialog({ open, chatId, onOpenChange, onUploadSuccess }: Up
                         Upload Document
                     </DialogTitle>
                     <DialogDescription className="text-slate-500">
-                        Upload a PDF document to add to this chat&apos;s knowledge base.
+                        {chatId 
+                            ? "Upload a PDF document to add to this chat's knowledge base."
+                            : "Upload a PDF document. A new chat will be created automatically."
+                        }
                     </DialogDescription>
                 </DialogHeader>
 

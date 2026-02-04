@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { Plus, Trash2, Loader2, MessageSquare } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
     Dialog,
@@ -18,12 +19,14 @@ import { cn } from "@/lib/utils";
 
 interface ChatsSidebarProps {
     currentChatId: string | null;
+    refreshToken: number;
     onChatSelect: (chatId: string) => void;
     onNewChat: () => void;
 }
 
 export function ChatsSidebar({
     currentChatId,
+    refreshToken,
     onChatSelect,
     onNewChat,
 }: ChatsSidebarProps) {
@@ -35,7 +38,25 @@ export function ChatsSidebar({
 
     useEffect(() => {
         fetchChats();
-    }, [currentChatId]); // Refresh when chat changes (e.g. after new chat)
+    }, [currentChatId, refreshToken]); // Refresh when chat changes or token bumps
+
+    // Method to update chat title (can be called from parent via ref or state management)
+    const updateChatTitle = (chatId: string, title: string) => {
+        setChats(prev => prev.map(chat =>
+            chat.id === chatId
+                ? { ...chat, title, updated_at: new Date().toISOString() }
+                : chat
+        ));
+    };
+
+    // Expose updateChatTitle via window for now (simple solution)
+    // Better approach would be using React context or zustand
+    useEffect(() => {
+        (window as any).updateChatTitle = updateChatTitle;
+        return () => {
+            delete (window as any).updateChatTitle;
+        };
+    }, []);
 
     const fetchChats = async () => {
         try {
@@ -43,6 +64,9 @@ export function ChatsSidebar({
             setChats(data);
         } catch (error) {
             console.error("Failed to fetch chats:", error);
+            toast.error("Failed to load chats", {
+                description: error instanceof Error ? error.message : "Please try again",
+            });
         } finally {
             setIsLoading(false);
         }
@@ -58,14 +82,21 @@ export function ChatsSidebar({
         if (!pendingDelete) return;
 
         setDeletingId(pendingDelete.id);
+        const chatTitle = pendingDelete.title || "Untitled Chat";
         try {
             await deleteChat(pendingDelete.id);
             setChats((prev) => prev.filter((c) => c.id !== pendingDelete.id));
             if (currentChatId === pendingDelete.id) {
                 onNewChat();
             }
+            toast.success("Chat deleted", {
+                description: `"${chatTitle}" has been removed`,
+            });
         } catch (error) {
             console.error("Failed to delete chat:", error);
+            toast.error("Failed to delete chat", {
+                description: error instanceof Error ? error.message : "Please try again",
+            });
         } finally {
             setDeletingId(null);
             setConfirmOpen(false);
@@ -117,7 +148,7 @@ export function ChatsSidebar({
                                         <MessageSquare className="h-3.5 w-3.5 text-slate-400 shrink-0" />
                                         <p
                                             className={cn(
-                                                "text-sm font-medium leading-snug whitespace-normal break-words",
+                                                "text-sm font-medium leading-snug whitespace-normal wrap-break-word",
                                                 currentChatId === chat.id ? "text-emerald-700" : "text-slate-700"
                                             )}
                                         >

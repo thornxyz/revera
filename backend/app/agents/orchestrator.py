@@ -625,6 +625,23 @@ class Orchestrator:
                 }
             ).eq("id", session_id).execute()
 
+            # Update chat title based on query
+            from app.services.title_generator import generate_title_from_query
+
+            new_title = generate_title_from_query(query)
+            logger.info(f"[ORCH CONTEXT] Updating chat {chat_id} title to: {new_title}")
+
+            try:
+                self.supabase.table("chats").update(
+                    {
+                        "title": new_title,
+                    }
+                ).eq("id", str(chat_id)).execute()
+                logger.info(f"[ORCH CONTEXT] Chat title updated successfully")
+            except Exception as title_err:
+                logger.error(f"[ORCH CONTEXT] Failed to update chat title: {title_err}")
+                # Don't fail the request if title update fails
+
             logger.info(f"[ORCH CONTEXT] Complete! Latency: {total_latency}ms")
             return result
 
@@ -889,6 +906,34 @@ class Orchestrator:
                 )
 
             self._log_agent_timeline(session_id, agent_timeline)
+
+            # Update chat title based on query
+            from app.services.title_generator import generate_title_from_query
+
+            new_title = generate_title_from_query(query)
+            logger.info(
+                f"[ORCH STREAM CONTEXT] Updating chat {chat_id} title to: {new_title}"
+            )
+
+            try:
+                self.supabase.table("chats").update(
+                    {
+                        "title": new_title,
+                    }
+                ).eq("id", str(chat_id)).execute()
+                logger.info(f"[ORCH STREAM CONTEXT] Chat title updated successfully")
+
+                # Emit SSE event for title update
+                yield {
+                    "type": "title_updated",
+                    "title": new_title,
+                    "chat_id": str(chat_id),
+                }
+            except Exception as title_err:
+                logger.error(
+                    f"[ORCH STREAM CONTEXT] Failed to update chat title: {title_err}"
+                )
+                # Don't fail the request if title update fails
 
             logger.info("[ORCH STREAM CONTEXT] Yielding final complete event")
             yield {

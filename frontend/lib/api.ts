@@ -103,14 +103,19 @@ export async function getTimeline(sessionId: string): Promise<AgentTimeline> {
     return response.json();
 }
 
-export async function uploadDocument(file: File, chatId: string): Promise<Document> {
+export async function uploadDocument(file: File, chatId?: string): Promise<Document> {
     const headers = (await getAuthHeaders()) as Record<string, string>;
     delete headers["Content-Type"]; // Let browser set boundary for FormData
 
     const formData = new FormData();
     formData.append("file", file);
 
-    const response = await fetch(`${API_BASE_URL}/api/documents/upload?chat_id=${chatId}`, {
+    // Build URL with optional chat_id parameter
+    const url = chatId 
+        ? `${API_BASE_URL}/api/documents/upload?chat_id=${chatId}`
+        : `${API_BASE_URL}/api/documents/upload`;
+    
+    const response = await fetch(url, {
         method: "POST",
         headers,
         body: formData,
@@ -366,6 +371,7 @@ export async function getChatMemory(
 // Chat Streaming
 export interface ChatStreamingCallbacks extends StreamingCallbacks {
     onMessageId?: (messageId: string) => void;
+    onTitleUpdated?: (title: string, chatId: string) => void;
 }
 
 export async function sendChatMessageStream(
@@ -443,6 +449,10 @@ export async function sendChatMessageStream(
                                 break;
                             case "sources":
                                 callbacks?.onSources?.(data.sources);
+                                break;
+                            case "title_updated":
+                                console.log(`[API] Title updated: ${data.title} for chat ${data.chat_id}`);
+                                callbacks?.onTitleUpdated?.(data.title, data.chat_id);
                                 break;
                             case "complete":
                                 callbacks?.onComplete?.(data);
