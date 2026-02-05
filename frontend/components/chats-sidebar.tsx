@@ -16,6 +16,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { listChats, deleteChat, ChatWithPreview } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { useChatContext } from "@/lib/chat-context";
 
 interface ChatsSidebarProps {
     currentChatId: string | null;
@@ -30,7 +31,7 @@ export function ChatsSidebar({
     onChatSelect,
     onNewChat,
 }: ChatsSidebarProps) {
-    const [chats, setChats] = useState<ChatWithPreview[]>([]);
+    const { chats, setChats } = useChatContext();
     const [isLoading, setIsLoading] = useState(true);
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [confirmOpen, setConfirmOpen] = useState(false);
@@ -39,24 +40,6 @@ export function ChatsSidebar({
     useEffect(() => {
         fetchChats();
     }, [currentChatId, refreshToken]); // Refresh when chat changes or token bumps
-
-    // Method to update chat title (can be called from parent via ref or state management)
-    const updateChatTitle = (chatId: string, title: string) => {
-        setChats(prev => prev.map(chat =>
-            chat.id === chatId
-                ? { ...chat, title, updated_at: new Date().toISOString() }
-                : chat
-        ));
-    };
-
-    // Expose updateChatTitle via window for now (simple solution)
-    // Better approach would be using React context or zustand
-    useEffect(() => {
-        (window as any).updateChatTitle = updateChatTitle;
-        return () => {
-            delete (window as any).updateChatTitle;
-        };
-    }, []);
 
     const fetchChats = async () => {
         try {

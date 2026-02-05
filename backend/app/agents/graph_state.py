@@ -1,6 +1,6 @@
 """LangGraph state schema for research workflow."""
 
-from typing import Annotated, TypedDict
+from typing import Annotated, NotRequired, TypedDict
 from operator import add
 
 from app.agents.planner import ExecutionPlan
@@ -44,3 +44,6 @@ class ResearchState(TypedDict):
     iteration_count: int
     needs_refinement: bool
     max_iterations: int
+
+    # Memory context (optional, for chat-based research)
+    memory_context: NotRequired[dict[str, list[dict]] | None]

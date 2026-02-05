@@ -209,7 +209,7 @@ class Orchestrator:
         - complete event with final session info
         """
         import time
-        from app.agents.base import AgentInput
+        from app.agents.base import AgentInput, AgentOutput
         from app.agents.planner import PlannerAgent
         from app.agents.retrieval import RetrievalAgent
         from app.agents.web_search import WebSearchAgent
@@ -314,11 +314,11 @@ class Orchestrator:
                 elif chunk.get("type") == "complete":
                     logger.info("[ORCH] Received synthesis complete event")
                     synthesis_output = chunk.get("output")
-                    synthesis_result = (
-                        synthesis_output.result if synthesis_output else {}
-                    )
-                    if synthesis_output:
+                    if isinstance(synthesis_output, AgentOutput):
+                        synthesis_result = synthesis_output.result
                         agent_timeline.append(synthesis_output.to_dict())
+                    else:
+                        synthesis_result = {}
 
             yield {"type": "node_complete", "node": "synthesis", "status": "complete"}
 
@@ -670,7 +670,7 @@ class Orchestrator:
 
         Combines memory-aware research with real-time streaming.
         """
-        from app.agents.base import AgentInput
+        from app.agents.base import AgentInput, AgentOutput
         from app.agents.planner import PlannerAgent
         from app.agents.retrieval import RetrievalAgent
         from app.agents.web_search import WebSearchAgent
@@ -808,55 +808,38 @@ class Orchestrator:
                     yield {"type": "answer_chunk", "content": chunk.get("content", "")}
                 elif chunk.get("type") == "complete":
                     synthesis_output = chunk.get("output")
-                    synthesis_result = (
-                        synthesis_output.result if synthesis_output else {}
-                    )
-                    if synthesis_output:
+                    if isinstance(synthesis_output, AgentOutput):
+                        synthesis_result = synthesis_output.result
                         agent_timeline.append(synthesis_output.to_dict())
+                    else:
+                        synthesis_result = {}
 
             yield {"type": "node_complete", "node": "synthesis", "status": "complete"}
 
             all_sources = self._normalize_sources(internal_sources, web_sources)
             yield {"type": "sources", "sources": all_sources}
 
-            # 5. Critic (with memory)
-            yield {"type": "node_complete", "node": "critic", "status": "running"}
-            verification = None
-            try:
-                critic = CriticAgent()
+            # 5. Skip critic in streaming flow (run in background)
+            # User gets answer immediately with "pending" confidence
+            yield {"type": "node_complete", "node": "critic", "status": "pending"}
+            verification = {
+                "verification_status": "pending",
+                "message": "Verification will complete shortly",
+            }
 
-                critic_memory_prompt = memory_service.format_memory_for_prompt(
-                    "critic", memory_context.get("critic", [])
-                )
-
-                critic_input = AgentInput(
+            # Queue background critic task (non-blocking)
+            logger.info("[ORCH STREAM CONTEXT] Queuing background critic task")
+            asyncio.create_task(
+                self._run_critic_background(
+                    session_id=session_id,
                     query=query,
-                    context={
-                        "synthesis_result": synthesis_result,
-                        "internal_sources": internal_sources,
-                        "web_sources": web_sources,
-                        "memory_prompt": critic_memory_prompt,
-                    },
+                    synthesis_result=synthesis_result,
+                    internal_sources=internal_sources,
+                    web_sources=web_sources,
+                    chat_id=chat_id,
+                    message_id=session_id,  # message_id == session_id
                 )
-                logger.info("[ORCH STREAM CONTEXT] Running critic with 20s timeout")
-                critic_output = await asyncio.wait_for(
-                    critic.run(critic_input), timeout=20.0
-                )
-                verification = critic_output.result
-                agent_timeline.append(critic_output.to_dict())
-                logger.info("[ORCH STREAM CONTEXT] Critic completed successfully")
-                yield {"type": "node_complete", "node": "critic", "status": "complete"}
-            except asyncio.TimeoutError:
-                logger.warning("[ORCH STREAM CONTEXT] Critic timed out after 20s")
-                verification = {
-                    "verification_status": "timeout",
-                    "issues": ["Verification timed out"],
-                }
-                yield {"type": "node_complete", "node": "critic", "status": "timeout"}
-            except Exception as e:
-                logger.error(f"[ORCH STREAM CONTEXT] Critic failed: {e}", exc_info=True)
-                verification = {"verification_status": "error", "issues": [str(e)]}
-                yield {"type": "node_complete", "node": "critic", "status": "error"}
+            )
 
             total_latency = int((time.perf_counter() - start_time) * 1000)
 
@@ -884,9 +867,11 @@ class Orchestrator:
                         {
                             "status": "completed",
                             "result": {
-                                "answer": synthesis_result.get("answer", "")
-                                if synthesis_result
-                                else "",
+                                "answer": (
+                                    synthesis_result.get("answer", "")
+                                    if synthesis_result
+                                    else ""
+                                ),
                                 "sources": all_sources,
                                 "verification": verification,
                                 "confidence": (
@@ -987,7 +972,7 @@ class Orchestrator:
             if agent_name == "planner":
                 result = entry.get("result")
                 # ExecutionPlan is a dataclass with subtasks, steps, constraints
-                if hasattr(result, "subtasks"):
+                if result and hasattr(result, "subtasks") and result.subtasks:
                     # Store subtasks as the plan summary
                     memory_state["plan"] = ", ".join(result.subtasks)
                 elif isinstance(result, dict):
@@ -1013,3 +998,105 @@ class Orchestrator:
                 )
             except Exception as e:
                 logger.warning(f"[ORCH] Failed to store memory for {agent_name}: {e}")
+
+    async def _run_critic_background(
+        self,
+        session_id: str,
+        query: str,
+        synthesis_result: dict | None,
+        internal_sources: list,
+        web_sources: list,
+        chat_id: UUID,
+        message_id: str,
+    ):
+        """
+        Run critic verification in background and update message.
+
+        No timeout - will complete eventually or fail with error.
+        This runs after the user receives their answer, so failures
+        are logged but don't block the response.
+        """
+        from app.agents.base import AgentInput
+        from app.agents.critic import CriticAgent
+        from app.core.database import get_supabase_service_client
+
+        logger.info(f"[BACKGROUND CRITIC] Starting for session_id={session_id}")
+
+        # Handle None synthesis_result
+        if synthesis_result is None:
+            logger.warning(
+                f"[BACKGROUND CRITIC] synthesis_result is None for session_id={session_id}, skipping verification"
+            )
+            verification = {
+                "verification_status": "skipped",
+                "message": "No synthesis result available for verification",
+            }
+            confidence = "unknown"
+
+            try:
+                supabase_service = get_supabase_service_client()
+                supabase_service.table("messages").update(
+                    {
+                        "verification": verification,
+                        "confidence": confidence,
+                    }
+                ).eq("id", message_id).execute()
+            except Exception as db_err:
+                logger.error(
+                    f"[BACKGROUND CRITIC] Failed to update message: {db_err}",
+                    exc_info=True,
+                )
+            return
+
+        try:
+            # Run critic with NO timeout - let it complete naturally
+            critic = CriticAgent()
+            critic_input = AgentInput(
+                query=query,
+                context={
+                    "synthesis_result": synthesis_result,
+                    "internal_sources": internal_sources,
+                    "web_sources": web_sources,
+                },
+            )
+
+            # No asyncio.wait_for() - just await directly
+            critic_output = await critic.run(critic_input)
+            verification = critic_output.result
+            confidence = verification.get("verification_status", "verified")
+
+            logger.info(
+                f"[BACKGROUND CRITIC] Complete: confidence={confidence}, "
+                f"session_id={session_id}, latency={critic_output.latency_ms}ms"
+            )
+
+        except Exception as e:
+            # Only real errors, no timeouts
+            logger.error(f"[BACKGROUND CRITIC] Error: {e}", exc_info=True)
+            verification = {
+                "verification_status": "error",
+                "message": f"Verification error: {str(e)}",
+                "error_type": type(e).__name__,
+            }
+            confidence = "error"
+
+        # Update message in database using service role (bypasses RLS)
+        try:
+            supabase_service = get_supabase_service_client()
+
+            supabase_service.table("messages").update(
+                {
+                    "verification": verification,
+                    "confidence": confidence,
+                }
+            ).eq("id", message_id).execute()
+
+            logger.info(
+                f"[BACKGROUND CRITIC] Updated message: message_id={message_id}, "
+                f"confidence={confidence}"
+            )
+
+        except Exception as db_err:
+            logger.error(
+                f"[BACKGROUND CRITIC] Failed to update message: {db_err}", exc_info=True
+            )

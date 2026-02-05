@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { User, Bot, ExternalLink } from "lucide-react";
+import { User, Bot, ExternalLink, Loader2 } from "lucide-react";
 import { StreamMarkdown } from "./stream-markdown";
 import { Message, Source } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -112,16 +112,31 @@ export function MessageList({ messages, isLoading = false, className }: MessageL
                             {message.confidence && (
                                 <div className="flex items-center gap-2">
                                     <span className="text-xs text-slate-500">Confidence:</span>
-                                    <span
-                                        className={cn(
-                                            "text-xs font-medium px-2 py-0.5 rounded-full",
-                                            message.confidence === "high" && "bg-emerald-100 text-emerald-700",
-                                            message.confidence === "medium" && "bg-amber-100 text-amber-700",
-                                            message.confidence === "low" && "bg-rose-100 text-rose-700"
-                                        )}
-                                    >
-                                        {message.confidence}
-                                    </span>
+                                    {message.confidence === "pending" ? (
+                                        <div className="flex items-center gap-1.5 text-xs text-blue-600">
+                                            <Loader2 className="h-3 w-3 animate-spin" />
+                                            <span>Verifying...</span>
+                                        </div>
+                                    ) : message.confidence === "verified" ? (
+                                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700">
+                                            ✓ Verified
+                                        </span>
+                                    ) : message.confidence === "error" ? (
+                                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-red-100 text-red-700">
+                                            Verification Error
+                                        </span>
+                                    ) : (
+                                        <span
+                                            className={cn(
+                                                "text-xs font-medium px-2 py-0.5 rounded-full",
+                                                message.confidence === "high" && "bg-emerald-100 text-emerald-700",
+                                                message.confidence === "medium" && "bg-amber-100 text-amber-700",
+                                                message.confidence === "low" && "bg-rose-100 text-rose-700"
+                                            )}
+                                        >
+                                            {message.confidence}
+                                        </span>
+                                    )}
                                 </div>
                             )}
                         </div>

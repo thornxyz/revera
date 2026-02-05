@@ -17,16 +17,19 @@ import {
   createChat,
   getChatMessages,
   sendChatMessageStream,
+  pollVerificationStatus,
   Message,
   Source
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
+import { useChatContext } from "@/lib/chat-context";
 import { ResizableLayout } from "@/components/resizable-layout";
 import { LoginPage } from "@/components/login-page";
 import { AgentProgress, ActivityLogItem } from "@/components/agent-progress";
 
 export default function ResearchPage() {
   const { user, loading, signOut } = useAuth();
+  const { updateChatTitle } = useChatContext();
   const [query, setQuery] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -174,10 +177,8 @@ export default function ResearchPage() {
             setStreamingSources((prev) => [...prev, ...sources]);
           },
           onTitleUpdated: (title, chatId) => {
-            // Update chat title in sidebar
-            if ((window as any).updateChatTitle) {
-              (window as any).updateChatTitle(chatId, title);
-            }
+            // Update chat title in sidebar using context
+            updateChatTitle(chatId, title);
           },
           onComplete: (data) => {
             // Streaming complete - refresh messages
@@ -195,6 +196,31 @@ export default function ResearchPage() {
             toast.success("Research complete", {
               description: `Answer generated in ${duration}s with ${data.sources?.length || 0} sources`,
             });
+
+            // Start polling if confidence is "pending"
+            if (data.confidence === "pending" && data.session_id && chatId) {
+              console.log("[Research] Starting verification polling for message:", data.session_id);
+              
+              pollVerificationStatus(
+                chatId,
+                data.session_id,
+                (verification, newConfidence) => {
+                  // Update the message in state
+                  setMessages(prev => prev.map(msg => 
+                    msg.id === data.session_id
+                      ? { ...msg, verification, confidence: newConfidence }
+                      : msg
+                  ));
+                  
+                  // Show toast notification
+                  toast.success("Verification complete", {
+                    description: `Confidence: ${newConfidence}`,
+                  });
+                }
+              ).catch(err => {
+                console.error("[Research] Verification polling error:", err);
+              });
+            }
           },
           onError: (message) => {
             setError(message);

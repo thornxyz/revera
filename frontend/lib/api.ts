@@ -483,6 +483,77 @@ export async function sendChatMessageStream(
 }
 
 
+/**
+ * Poll for verification status with exponential backoff.
+ * No timeout - polls indefinitely until verification completes.
+ */
+export async function pollVerificationStatus(
+    chatId: string,
+    messageId: string,
+    onUpdate: (verification: any, confidence: string) => void,
+): Promise<void> {
+    let attempt = 0;
+    let delay = 2000;  // Start with 2s
+    const maxDelay = 10000;  // Cap at 10s
+    
+    const poll = async () => {
+        try {
+            const headers = await getAuthHeaders();
+            const response = await fetch(
+                `${API_BASE_URL}/api/chats/${chatId}/messages/${messageId}/verification`,
+                { headers }
+            );
+            
+            if (response.status === 200) {
+                // Verification complete (either "verified" or "error")
+                const data = await response.json();
+                console.log(`[Polling] Verification complete: confidence=${data.confidence}`);
+                onUpdate(data.verification, data.confidence);
+                return true;  // Stop polling
+            } else if (response.status === 202) {
+                // Still pending - continue polling
+                console.log(`[Polling] Verification pending (attempt ${attempt + 1})`);
+                return false;
+            } else if (response.status === 401) {
+                // Auth issue - token might be refreshing
+                console.warn(`[Polling] Auth issue (attempt ${attempt + 1}), will retry...`);
+                return false;  // Continue polling
+            } else {
+                // Other unexpected status - log but continue polling
+                console.warn(`[Polling] Unexpected status ${response.status} (attempt ${attempt + 1}), retrying...`);
+                return false;  // Continue polling
+            }
+        } catch (error) {
+            console.error("[Polling] Verification poll error:", error);
+            // Network errors shouldn't stop polling - critic might still complete
+            return false;
+        }
+    };
+    
+    // Infinite polling loop with exponential backoff
+    while (true) {
+        const done = await poll();
+        
+        if (done) {
+            console.log(`[Polling] Verification complete after ${attempt + 1} attempts`);
+            return;
+        }
+        
+        // Wait before next poll
+        await new Promise(resolve => setTimeout(resolve, delay));
+        
+        // Exponential backoff: 2s → 4s → 8s → 10s (capped)
+        attempt++;
+        if (attempt < 3) {  // First 3 attempts use exponential backoff
+            delay = Math.min(delay * 2, maxDelay);
+        }
+        // After that, stay at maxDelay (10s between polls)
+        
+        console.log(`[Polling] Verification still pending, retry in ${delay / 1000}s (attempt ${attempt + 1})`);
+    }
+}
+
+
 // Streaming Types
 export interface StreamChunk {
     type: "agent_status" | "answer_chunk" | "thought_chunk" | "sources" | "complete" | "error";

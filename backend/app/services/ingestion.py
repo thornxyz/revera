@@ -86,111 +86,156 @@ class IngestionService:
         if not document_id:
             raise ValueError("Document ID not returned from database")
 
-        # 2. Extract text from PDF
-        text_pages = self._extract_pdf_text(file_content)
-
-        # 3. Chunk the text
-        chunks = self._chunk_text(text_pages)
-        if not chunks:
-            return UUID(hex=document_id)
-
-        chunk_texts = [c["content"] for c in chunks]
-
-        # 4. Generate Embeddings (Triple Hybrid) - PARALLEL EXECUTION
-        logger.info(f"Generating embeddings for {len(chunks)} chunks in parallel...")
-
-        # Define async/threaded tasks for each embedding type
-        async def generate_dense():
-            """Dense embeddings via Gemini API (async network call)."""
-            return await self.gemini.embed_texts_async(chunk_texts)
-
-        async def generate_colbert():
-            """ColBERT embeddings via local model (CPU-bound, run in thread)."""
-            return await asyncio.to_thread(
-                lambda: list(self.colbert_model.embed(chunk_texts))
-            )
-
-        async def generate_sparse():
-            """Sparse BM25 embeddings via local model (CPU-bound, run in thread)."""
-            return await asyncio.to_thread(
-                lambda: list(self.sparse_model.embed(chunk_texts))
-            )
-
-        # Run all three embedding generations concurrently
-        dense_embeddings, colbert_embeddings, sparse_embeddings = await asyncio.gather(
-            generate_dense(),
-            generate_colbert(),
-            generate_sparse(),
-        )
-
-        logger.info("All embeddings generated successfully")
-
-        # 5. Prepare Points for Qdrant
-        points = []
-        for i, chunk in enumerate(chunks):
-            # Format Late Interaction for Qdrant (Multi-Vector)
-            # FastEmbed returns list of numpy arrays for ColBERT
-            colbert_vectors = (
-                colbert_embeddings[i].tolist()
-                if hasattr(colbert_embeddings[i], "tolist")
-                else colbert_embeddings[i]
-            )
-
-            # Format Sparse for Qdrant
-            sparse_vec = sparse_embeddings[i]
-
-            payload = {
-                "document_id": document_id,
-                "user_id": str(user_id),
-                "content": chunk["content"],
-                "metadata": chunk["metadata"],
-                "filename": filename,
-            }
-
-            vector = cast(
-                Any,
-                {
-                    "dense": dense_embeddings[i],
-                    "colbert": colbert_vectors,
-                    "sparse": models.SparseVector(
-                        indices=sparse_vec.indices.tolist(),
-                        values=sparse_vec.values.tolist(),
-                    ),
-                },
-            )
-
-            points.append(
-                models.PointStruct(
-                    id=str(uuid.uuid4()),
-                    vector=vector,
-                    payload=payload,
-                )
-            )
-
-        # 6. Upsert to Qdrant
-        batch_size = self.settings.qdrant_upsert_batch_size
-        if batch_size <= 0:
-            batch_size = len(points)
-
-        total_batches = max(1, (len(points) + batch_size - 1) // batch_size)
-        print(f"Upserting {len(points)} points to Qdrant in {total_batches} batches...")
+        # Wrap all processing in try-catch to ensure rollback on any failure
         try:
+            # 2. Extract text from PDF
+            text_pages = self._extract_pdf_text(file_content)
+
+            # 3. Chunk the text
+            chunks = self._chunk_text(text_pages)
+            if not chunks:
+                return UUID(hex=document_id)
+
+            chunk_texts = [c["content"] for c in chunks]
+
+            # 4. Generate Embeddings (Triple Hybrid) - PARALLEL EXECUTION
+            logger.info(
+                f"Generating embeddings for {len(chunks)} chunks in parallel..."
+            )
+
+            # Define async/threaded tasks for each embedding type
+            async def generate_dense():
+                """Dense embeddings via Gemini API (async network call)."""
+                return await self.gemini.embed_texts_async(chunk_texts)
+
+            async def generate_colbert():
+                """ColBERT embeddings via local model (CPU-bound, run in thread)."""
+                return await asyncio.to_thread(
+                    lambda: list(self.colbert_model.embed(chunk_texts))
+                )
+
+            async def generate_sparse():
+                """Sparse BM25 embeddings via local model (CPU-bound, run in thread)."""
+                return await asyncio.to_thread(
+                    lambda: list(self.sparse_model.embed(chunk_texts))
+                )
+
+            # Run all three embedding generations concurrently
+            (
+                dense_embeddings,
+                colbert_embeddings,
+                sparse_embeddings,
+            ) = await asyncio.gather(
+                generate_dense(),
+                generate_colbert(),
+                generate_sparse(),
+            )
+
+            logger.info("All embeddings generated successfully")
+
+            # 5. Prepare Points for Qdrant
+            points = []
+            for i, chunk in enumerate(chunks):
+                # Format Late Interaction for Qdrant (Multi-Vector)
+                # FastEmbed returns list of numpy arrays for ColBERT
+                colbert_vectors = (
+                    colbert_embeddings[i].tolist()
+                    if hasattr(colbert_embeddings[i], "tolist")
+                    else colbert_embeddings[i]
+                )
+
+                # Format Sparse for Qdrant
+                sparse_vec = sparse_embeddings[i]
+
+                payload = {
+                    "document_id": document_id,
+                    "user_id": str(user_id),
+                    "content": chunk["content"],
+                    "metadata": chunk["metadata"],
+                    "filename": filename,
+                }
+
+                vector = cast(
+                    Any,
+                    {
+                        "dense": dense_embeddings[i],
+                        "colbert": colbert_vectors,
+                        "sparse": models.SparseVector(
+                            indices=sparse_vec.indices.tolist(),
+                            values=sparse_vec.values.tolist(),
+                        ),
+                    },
+                )
+
+                points.append(
+                    models.PointStruct(
+                        id=str(uuid.uuid4()),
+                        vector=vector,
+                        payload=payload,
+                    )
+                )
+
+            # 6. Upsert to Qdrant with retry logic
+            batch_size = self.settings.qdrant_upsert_batch_size
+            if batch_size <= 0:
+                batch_size = len(points)
+
+            total_batches = max(1, (len(points) + batch_size - 1) // batch_size)
+            print(
+                f"Upserting {len(points)} points to Qdrant in {total_batches} batches..."
+            )
+
             for batch_index in range(0, len(points), batch_size):
                 batch_number = batch_index // batch_size + 1
                 batch_points = points[batch_index : batch_index + batch_size]
                 print(
                     f"Upserting batch {batch_number}/{total_batches} ({len(batch_points)} points)..."
                 )
-                self.qdrant.get_client().upsert(
-                    collection_name=self.qdrant.collection_name,
-                    points=batch_points,
-                )
-            print("✅ Upsert complete!")
-        except Exception as e:
-            print(f"❌ Qdrant upsert failed: {e}")
-            raise
 
-        return UUID(hex=document_id)
+                # Retry logic for transient failures
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        self.qdrant.get_client().upsert(
+                            collection_name=self.qdrant.collection_name,
+                            points=batch_points,
+                        )
+                        break  # Success, exit retry loop
+                    except Exception as retry_error:
+                        if attempt < max_retries - 1:
+                            wait_time = 2**attempt  # Exponential backoff: 1s, 2s, 4s
+                            print(
+                                f"⚠️  Retry {attempt + 1}/{max_retries} after {wait_time}s: {retry_error}"
+                            )
+                            await asyncio.sleep(wait_time)
+                        else:
+                            raise  # Final attempt failed, re-raise
+
+            print("✅ Upsert complete!")
+            return UUID(hex=document_id)
+
+        except Exception as e:
+            # Rollback: Delete the orphaned document from Supabase if any processing failed
+            print(f"❌ Processing failed: {e}")
+            logger.error(
+                f"[INGEST] Processing failed for document {document_id}, rolling back",
+                extra={"document_id": document_id, "error": str(e)},
+            )
+            try:
+                self.supabase.table("documents").delete().eq(
+                    "id", document_id
+                ).execute()
+                print(f"🔄 Rolled back document {document_id} from Supabase")
+            except Exception as rollback_error:
+                logger.error(
+                    f"[INGEST] Failed to rollback document {document_id}",
+                    extra={"rollback_error": str(rollback_error)},
+                )
+                print(
+                    f"⚠️  Warning: Failed to rollback document {document_id}: {rollback_error}"
+                )
+
+            raise
 
     def _extract_pdf_text(self, file_content: bytes) -> list[dict]:
         """Extract markdown text from PDF with page numbers."""

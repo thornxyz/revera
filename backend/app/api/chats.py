@@ -374,6 +374,63 @@ async def get_chat_messages(
     ]
 
 
+@router.get("/{chat_id}/messages/{message_id}/verification")
+async def get_message_verification(
+    chat_id: str,
+    message_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """
+    Get verification status for a message.
+
+    Used for polling when critic completes in background.
+    Returns 202 if still pending, 200 when complete.
+    """
+    from fastapi.responses import JSONResponse
+
+    supabase = get_supabase_client()
+
+    # Verify chat ownership
+    chat_check = (
+        supabase.table("chats")
+        .select("id")
+        .eq("id", chat_id)
+        .eq("user_id", user_id)
+        .execute()
+    )
+
+    if not chat_check.data:
+        raise HTTPException(status_code=404, detail="Chat not found")
+
+    # Get message
+    message_response = (
+        supabase.table("messages")
+        .select("verification, confidence")
+        .eq("id", message_id)
+        .eq("chat_id", chat_id)
+        .single()
+        .execute()
+    )
+
+    if not message_response.data:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    message = message_response.data
+    confidence = message.get("confidence", "unknown")
+
+    # Return 202 if still pending, 200 when complete
+    status_code = 202 if confidence == "pending" else 200
+
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "confidence": confidence,
+            "verification": message.get("verification"),
+            "status": "pending" if confidence == "pending" else "complete",
+        },
+    )
+
+
 # ============================================
 # Query Endpoints (Research within a chat)
 # ============================================

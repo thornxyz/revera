@@ -16,6 +16,7 @@ class QdrantService:
             url=settings.qdrant_url,
             api_key=settings.qdrant_api_key,
             prefer_grpc=True,
+            timeout=300,  # 5 minutes for large batch uploads with triple vectors
         )
         self.collection_name = "revera_documents"
         self._ensure_collection()

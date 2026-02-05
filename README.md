@@ -196,9 +196,9 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/documents/upload` | Upload PDF document |
-| GET | `/api/documents/` | List all documents |
-| DELETE | `/api/documents/{id}` | Delete document |
+| POST | `/api/documents/upload?chat_id={id}` | Upload PDF (auto-creates chat if no `chat_id`) |
+| GET | `/api/documents/?chat_id={id}` | List documents (optional chat filter) |
+| DELETE | `/api/documents/{id}` | Delete document and embeddings |
 
 ### Chat Management
 
@@ -207,9 +207,14 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 | GET | `/api/chats/` | List all chats for user |
 | POST | `/api/chats/` | Create new chat |
 | GET | `/api/chats/{id}` | Get chat details |
-| PATCH | `/api/chats/{id}` | Update chat (e.g., title) |
+| PUT | `/api/chats/{id}` | Update chat (e.g., title) |
 | DELETE | `/api/chats/{id}` | **Comprehensive deletion** (see below) |
 | GET | `/api/chats/{id}/messages` | Get all messages in chat |
+| GET | `/api/chats/{id}/messages/{msg_id}/verification` | Poll verification status |
+| POST | `/api/chats/{id}/query` | Send query within chat (non-streaming) |
+| POST | `/api/chats/{id}/query/stream` | Send query with SSE streaming |
+| GET | `/api/chats/{id}/memory` | Get agent memory context |
+| GET | `/api/chats/{id}/memory/{agent}` | Get memory for specific agent |
 
 
 

@@ -4,6 +4,7 @@ import re
 import time
 import json
 import logging
+from typing import AsyncGenerator
 
 from app.agents.base import BaseAgent, AgentInput, AgentOutput
 from app.llm.gemini import get_gemini_client
@@ -231,7 +232,7 @@ Produce a well-cited answer in JSON format."""
             latency_ms=latency,
         )
 
-    async def run_stream(self, input: AgentInput):
+    async def run_stream(self, input: AgentInput) -> AsyncGenerator[dict, None]:
         """
         Synthesize an answer with streaming output.
 
