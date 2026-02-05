@@ -10,12 +10,14 @@ flowchart TB
         UI[Research UI]
         Timeline[Agent Timeline]
         DocPanel[Documents Panel]
+        ChatList[Chat Management]
     end
 
     subgraph API["API Layer (FastAPI)"]
         ResearchAPI["/api/research/query<br/>/api/research/query/stream"]
         DocumentsAPI["/api/documents/*"]
         HistoryAPI["/api/research/history/*"]
+        ChatsAPI["/api/chats/*<br/>(CRUD + Cleanup)"]
     end
 
     subgraph LangGraph["LangGraph Workflow"]
@@ -37,6 +39,7 @@ flowchart TB
     subgraph Services["Core Services"]
         Ingestion["Document Ingestion<br/>(PDF → Chunks)"]
         HybridRAG["Triple Hybrid Search<br/>(Dense + Sparse + ColBERT)"]
+        Cleanup["Chat Cleanup Service<br/>(Comprehensive Deletion)"]
     end
 
     subgraph External["External APIs"]
@@ -47,14 +50,17 @@ flowchart TB
     subgraph Data["Data Layer"]
         Supabase[(Supabase<br/>Auth & Metadata)]
         Qdrant[(Qdrant<br/>Vector DB)]
+        Memory[(InMemoryStore<br/>Agent Memories)]
     end
 
     UI --> ResearchAPI
     DocPanel --> DocumentsAPI
     Timeline --> ResearchAPI
+    ChatList --> ChatsAPI
     
     ResearchAPI --> Planner
     DocumentsAPI --> Ingestion
+    ChatsAPI --> Cleanup
     
     Retrieval --> HybridRAG
     WebSearch --> Tavily
@@ -64,7 +70,12 @@ flowchart TB
     Ingestion --> Qdrant
     Synthesis --> Gemini
     Critic --> Gemini
+    Planner --> Memory
+    Synthesis --> Memory
     
+    Cleanup --> Supabase
+    Cleanup --> Qdrant
+    Cleanup --> Memory
     Supabase --> Ingestion
     ResearchAPI --> Supabase
 ```
@@ -79,6 +90,7 @@ flowchart TB
 - **⚡ Parallel Execution**: Async operations and concurrent embedding generation (~3x speedup)
 - **📊 Real-Time Streaming**: SSE for live agent progress, answer chunks, and reasoning tokens
 - **📚 Document Management**: Upload, index, and search PDF documents with triple embeddings
+- **💬 Chat Management**: Multi-turn conversations with comprehensive data cleanup on deletion
 - **🔐 Secure Authentication**: Google OAuth via Supabase with row-level security
 
 ## Tech Stack
@@ -89,6 +101,7 @@ flowchart TB
 | **Backend** | FastAPI, Python 3.12+, asyncio |
 | **Orchestration** | LangGraph (state-based agent workflow) |
 | **Vector Database** | Qdrant (Triple Hybrid: Dense + Sparse + ColBERT) |
+| **Agent Memory** | LangGraph InMemoryStore (episodic/semantic memory) |
 | **Embeddings** | Gemini 3 (3072d dense), FastEmbed (BM25, ColBERT) |
 | **LLM** | Gemini 3 Flash Preview (with native thinking mode) |
 | **Web Search** | Tavily API |
@@ -187,27 +200,16 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 | GET | `/api/documents/` | List all documents |
 | DELETE | `/api/documents/{id}` | Delete document |
 
-### Request/Response Examples
+### Chat Management
 
-**Research Query (POST /api/research/query)**:
-```json
-{
-  "query": "Your research question",
-  "use_web": true,
-  "document_ids": ["id1", "id2"]
-}
-```
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/chats/` | List all chats for user |
+| POST | `/api/chats/` | Create new chat |
+| GET | `/api/chats/{id}` | Get chat details |
+| PATCH | `/api/chats/{id}` | Update chat (e.g., title) |
+| DELETE | `/api/chats/{id}` | **Comprehensive deletion** (see below) |
+| GET | `/api/chats/{id}/messages` | Get all messages in chat |
 
-**Research Response**:
-```json
-{
-  "session_id": "uuid",
-  "query": "Your research question",
-  "answer": "Comprehensive answer with citations",
-  "sources": [{"title": "...", "url": "...", "content": "..."}],
-  "verification": {"status": "verified", "confidence": 0.95},
-  "confidence": "high",
-  "total_latency_ms": 5000
-}
-```
+
 

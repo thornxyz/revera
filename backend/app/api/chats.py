@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from app.core.auth import get_current_user_id
 from app.core.database import get_supabase_client
+from app.core.utils import sanitize_for_postgres
 from app.models.schemas import Chat, ChatCreate, ChatWithPreview, Message
 from app.services.agent_memory import get_agent_memory_service
 
@@ -291,28 +292,32 @@ async def delete_chat(
     user_id: str = Depends(get_current_user_id),
 ):
     """
-    Delete a chat.
+    Delete a chat and ALL associated data.
 
-    This will cascade delete all messages, documents, and associated data.
+    This comprehensively deletes:
+    - Agent memories (InMemoryStore - episodic/semantic)
+    - Document embeddings (Qdrant vectors)
+    - Documents and chunks (database + Qdrant)
+    - Research sessions and agent logs
+    - Messages
+    - Chat record
+
+    Returns deletion statistics for verification.
     """
-    supabase = get_supabase_client()
+    from app.services.chat_cleanup import get_cleanup_service
 
-    # Verify ownership
-    check = (
-        supabase.table("chats")
-        .select("id")
-        .eq("id", chat_id)
-        .eq("user_id", user_id)
-        .execute()
-    )
-
-    if not check.data:
-        raise HTTPException(status_code=404, detail="Chat not found")
-
-    # Delete (cascades to messages, documents, etc.)
-    supabase.table("chats").delete().eq("id", chat_id).execute()
-
-    return {"message": "Chat deleted", "chat_id": chat_id}
+    try:
+        cleanup_service = get_cleanup_service()
+        stats = await cleanup_service.delete_chat_completely(chat_id, user_id)
+        return {
+            "message": "Chat and all associated data deleted successfully",
+            "stats": stats,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"[DELETE_CHAT] Error deleting chat {chat_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to delete chat: {str(e)}")
 
 
 # ============================================
@@ -414,6 +419,9 @@ async def send_chat_query(
         supabase.table("chats").update({"thread_id": thread_id}).eq(
             "id", chat_id
         ).execute()
+
+    # Ensure thread_id is a string for type safety
+    thread_id = str(thread_id)
 
     try:
         # Create orchestrator with memory
@@ -566,17 +574,19 @@ async def send_chat_query_stream(
                         )
 
                         supabase.table("messages").insert(
-                            {
-                                "id": message_id,
-                                "chat_id": chat_id,
-                                "session_id": event.get("session_id"),
-                                "query": request.query,
-                                "answer": accumulated_answer,
-                                "role": "assistant",
-                                "sources": event.get("sources", []),
-                                "verification": event.get("verification"),
-                                "confidence": event.get("confidence"),
-                            }
+                            sanitize_for_postgres(
+                                {
+                                    "id": message_id,
+                                    "chat_id": chat_id,
+                                    "session_id": event.get("session_id"),
+                                    "query": request.query,
+                                    "answer": accumulated_answer,
+                                    "role": "assistant",
+                                    "sources": event.get("sources", []),
+                                    "verification": event.get("verification"),
+                                    "confidence": event.get("confidence"),
+                                }
+                            )
                         ).execute()
 
                         complete_data = {

@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from app.agents.graph_builder import compile_research_graph
 from app.agents.graph_state import ResearchState
 from app.core.database import get_supabase_client
+from app.core.utils import sanitize_for_postgres
 from app.services.agent_memory import get_agent_memory_service
 
 logger = logging.getLogger(__name__)
@@ -879,24 +880,26 @@ class Orchestrator:
             logger.info("[ORCH STREAM CONTEXT] Updating session in database...")
             try:
                 self.supabase.table("research_sessions").update(
-                    {
-                        "status": "completed",
-                        "result": {
-                            "answer": synthesis_result.get("answer", "")
-                            if synthesis_result
-                            else "",
-                            "sources": all_sources,
-                            "verification": verification,
-                            "confidence": (
-                                verification.get("verification_status", "unknown")
-                                if verification
-                                else "unknown"
-                            ),
-                            "total_latency_ms": total_latency,
-                            "query": query,
-                            "session_id": session_id,
-                        },
-                    }
+                    sanitize_for_postgres(
+                        {
+                            "status": "completed",
+                            "result": {
+                                "answer": synthesis_result.get("answer", "")
+                                if synthesis_result
+                                else "",
+                                "sources": all_sources,
+                                "verification": verification,
+                                "confidence": (
+                                    verification.get("verification_status", "unknown")
+                                    if verification
+                                    else "unknown"
+                                ),
+                                "total_latency_ms": total_latency,
+                                "query": query,
+                                "session_id": session_id,
+                            },
+                        }
+                    )
                 ).eq("id", session_id).execute()
                 logger.info("[ORCH STREAM CONTEXT] Session updated successfully")
             except Exception as db_err:
