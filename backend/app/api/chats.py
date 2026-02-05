@@ -368,6 +368,8 @@ async def get_chat_messages(
             sources=msg.get("sources", []),
             verification=msg.get("verification"),
             confidence=msg.get("confidence"),
+            thinking=msg.get("thinking"),
+            agent_timeline=msg.get("agent_timeline"),
             created_at=msg["created_at"],
         )
         for msg in messages_response.data
@@ -505,6 +507,8 @@ async def send_chat_query(
                 "session_id": result.session_id,
                 "query": request.query,
                 "answer": result.answer,
+                "thinking": "",  # Synchronous research doesn't expose thinking yet
+                "agent_timeline": [],  # Synchronous research doesn't expose timeline yet
                 "role": "assistant",
                 "sources": result.sources,
                 "verification": result.verification,
@@ -592,6 +596,7 @@ async def send_chat_query_stream(
                 orchestrator = Orchestrator(user_id)
 
                 accumulated_answer = ""
+                accumulated_thinking = ""
 
                 # Stream research with chat context
                 async for event in orchestrator.research_stream_with_context(
@@ -615,7 +620,9 @@ async def send_chat_query_stream(
                         yield f"event: answer_chunk\ndata: {json.dumps({'content': content})}\n\n"
 
                     elif event_type == "thought_chunk":
-                        yield f"event: thought_chunk\ndata: {json.dumps({'content': event.get('content', '')})}\n\n"
+                        content = event.get("content", "")
+                        accumulated_thinking += content
+                        yield f"event: thought_chunk\ndata: {json.dumps({'content': content})}\n\n"
 
                     elif event_type == "sources":
                         logger.info(
@@ -630,6 +637,37 @@ async def send_chat_query_stream(
                             f"[CHAT_STREAM] Research complete, storing message_id={message_id}"
                         )
 
+                        # Use agent_timeline from event if available, otherwise empty
+                        agent_timeline = event.get("agent_timeline", [])
+
+                        # Fallback to DB if empty (legacy support)
+                        if not agent_timeline:
+                            try:
+                                timeline_logs = (
+                                    supabase.table("agent_logs")
+                                    .select("*")
+                                    .eq("session_id", event.get("session_id"))
+                                    .order("created_at")
+                                    .execute()
+                                )
+                                agent_timeline = [
+                                    {
+                                        "agent": log["agent_name"],
+                                        "latency_ms": log["latency_ms"],
+                                        "events": log["events"],
+                                    }
+                                    for log in timeline_logs.data
+                                ]
+                            except Exception as e:
+                                logger.error(
+                                    f"[CHAT_STREAM] Failed to fetch timeline logs: {e}"
+                                )
+                                agent_timeline = []
+
+                        logger.info(
+                            f"[CHAT_STREAM] Inserting message. Thinking len: {len(accumulated_thinking)}, Timeline len: {len(agent_timeline)}"
+                        )
+
                         supabase.table("messages").insert(
                             sanitize_for_postgres(
                                 {
@@ -638,6 +676,8 @@ async def send_chat_query_stream(
                                     "session_id": event.get("session_id"),
                                     "query": request.query,
                                     "answer": accumulated_answer,
+                                    "thinking": accumulated_thinking,
+                                    "agent_timeline": agent_timeline,
                                     "role": "assistant",
                                     "sources": event.get("sources", []),
                                     "verification": event.get("verification"),

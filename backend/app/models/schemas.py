@@ -156,6 +156,8 @@ class Message(MessageBase):
     sources: list[dict] = Field(default_factory=list)
     verification: dict | None = None
     confidence: str | None = None
+    thinking: str | None = None
+    agent_timeline: list[dict] | None = None
     created_at: datetime
 
     class Config:

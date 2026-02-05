@@ -47,6 +47,8 @@ CREATE TABLE messages (
     session_id UUID REFERENCES research_sessions(id) ON DELETE SET NULL,
     query TEXT NOT NULL,
     answer TEXT,
+    thinking TEXT,  -- LLM reasoning/thought process
+    agent_timeline JSONB DEFAULT '[]',  -- Agent execution steps [{agent, latency_ms, events}]
     role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
     sources JSONB DEFAULT '[]',
     verification JSONB,

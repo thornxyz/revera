@@ -937,6 +937,7 @@ class Orchestrator:
                 "total_latency_ms": total_latency,
                 "sources": all_sources,
                 "verification": verification,
+                "agent_timeline": agent_timeline,
             }
             logger.info("[ORCH STREAM CONTEXT] Stream complete!")
 

@@ -5,6 +5,7 @@ import { User, Bot, ExternalLink, Loader2 } from "lucide-react";
 import { StreamMarkdown } from "./stream-markdown";
 import { Message, Source } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { MessageThinking } from "./message-thinking";
 
 interface MessageListProps {
     messages: Message[];
@@ -26,17 +27,17 @@ export function MessageList({ messages, isLoading = false, className }: MessageL
         const handleScroll = () => {
             const { scrollTop, scrollHeight, clientHeight } = container;
             const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
-            
+
             // If user scrolled up, mark it
             if (scrollTop < lastScrollTopRef.current) {
                 userHasScrolledRef.current = true;
             }
-            
+
             // If user scrolled back to bottom, allow auto-scroll again
             if (isAtBottom) {
                 userHasScrolledRef.current = false;
             }
-            
+
             lastScrollTopRef.current = scrollTop;
         };
 
@@ -64,7 +65,7 @@ export function MessageList({ messages, isLoading = false, className }: MessageL
 
     return (
         <div ref={containerRef} className={cn("space-y-6 p-6", className)}>
-            {messages.map((message) => (
+            {messages.map((message, index) => (
                 <div key={message.id} className="space-y-4">
                     {/* User Query */}
                     <div className="flex gap-3">
@@ -91,8 +92,18 @@ export function MessageList({ messages, isLoading = false, className }: MessageL
                         <div className="flex-1 min-w-0 space-y-3">
                             <p className="text-sm font-medium text-slate-900">Assistant</p>
                             <div className="rounded-lg bg-white border border-slate-200 px-4 py-3">
+                                <MessageThinking
+                                    thinking={message.thinking}
+                                    timeline={message.agent_timeline}
+                                    isStreaming={isLoading && index === messages.length - 1}
+                                />
+
                                 <StreamMarkdown content={message.answer} isStreaming={false} />
                             </div>
+
+                            {/* Sources */}
+                            {/* Thinking Process */}
+
 
                             {/* Sources */}
                             {message.sources && message.sources.length > 0 && (
@@ -100,7 +111,7 @@ export function MessageList({ messages, isLoading = false, className }: MessageL
                                     <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">
                                         Sources ({message.sources.length})
                                     </p>
-                                    <div className="grid gap-2">
+                                    <div className="grid gap-2 grid-cols-1 sm:grid-cols-2">
                                         {message.sources.map((source, idx) => (
                                             <SourceCard key={idx} source={source} index={idx + 1} />
                                         ))}
@@ -110,7 +121,7 @@ export function MessageList({ messages, isLoading = false, className }: MessageL
 
                             {/* Confidence Badge */}
                             {message.confidence && (
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-2 mt-2">
                                     <span className="text-xs text-slate-500">Confidence:</span>
                                     {message.confidence === "pending" ? (
                                         <div className="flex items-center gap-1.5 text-xs text-blue-600">
@@ -163,7 +174,7 @@ export function MessageList({ messages, isLoading = false, className }: MessageL
                     </div>
                 </div>
             )}
-            
+
             {/* Invisible marker for auto-scroll */}
             <div ref={endOfMessagesRef} />
         </div>

@@ -12,7 +12,6 @@ import { DocumentsPanel } from "@/components/documents-panel";
 import { UploadDialog } from "@/components/upload-dialog";
 import { ChatsSidebar } from "@/components/chats-sidebar";
 import { MessageList } from "@/components/message-list";
-import { AgentTimelinePanel } from "@/components/agent-timeline";
 import {
   createChat,
   getChatMessages,
@@ -36,7 +35,7 @@ export default function ResearchPage() {
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
 
   // Chat State
-  const [activeTab, setActiveTab] = useState<"chat" | "documents" | "timeline">("chat");
+  const [activeTab, setActiveTab] = useState<"chat" | "documents">("chat");
   const [currentChatId, setCurrentChatId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
@@ -200,18 +199,18 @@ export default function ResearchPage() {
             // Start polling if confidence is "pending"
             if (data.confidence === "pending" && data.session_id && chatId) {
               console.log("[Research] Starting verification polling for message:", data.session_id);
-              
+
               pollVerificationStatus(
                 chatId,
                 data.session_id,
                 (verification, newConfidence) => {
                   // Update the message in state
-                  setMessages(prev => prev.map(msg => 
+                  setMessages(prev => prev.map(msg =>
                     msg.id === data.session_id
                       ? { ...msg, verification, confidence: newConfidence }
                       : msg
                   ));
-                  
+
                   // Show toast notification
                   toast.success("Verification complete", {
                     description: `Confidence: ${newConfidence}`,
@@ -296,8 +295,8 @@ export default function ResearchPage() {
               <button
                 onClick={() => setActiveTab("chat")}
                 className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === "chat"
-                    ? "text-emerald-700 border-b-2 border-emerald-500 bg-emerald-50"
-                    : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+                  ? "text-emerald-700 border-b-2 border-emerald-500 bg-emerald-50"
+                  : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
                   }`}
               >
                 Chats
@@ -305,20 +304,11 @@ export default function ResearchPage() {
               <button
                 onClick={() => setActiveTab("documents")}
                 className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === "documents"
-                    ? "text-emerald-700 border-b-2 border-emerald-500 bg-emerald-50"
-                    : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+                  ? "text-emerald-700 border-b-2 border-emerald-500 bg-emerald-50"
+                  : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
                   }`}
               >
                 Documents
-              </button>
-              <button
-                onClick={() => setActiveTab("timeline")}
-                className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === "timeline"
-                    ? "text-emerald-700 border-b-2 border-emerald-500 bg-emerald-50"
-                    : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
-                  }`}
-              >
-                Timeline
               </button>
             </div>
 
@@ -331,7 +321,7 @@ export default function ResearchPage() {
                   onChatSelect={handleChatSelect}
                   onNewChat={handleNewChat}
                 />
-              ) : activeTab === "documents" ? (
+              ) : (
                 <div className="h-full flex flex-col">
                   <div className="p-4 border-b border-slate-200/70">
                     <Button
@@ -348,18 +338,6 @@ export default function ResearchPage() {
                       onDocumentSelect={setSelectedDocumentIds}
                       refreshToken={documentsRefreshToken}
                     />
-                  </div>
-                </div>
-              ) : (
-                <div className="h-full flex flex-col">
-                  <div className="p-4 border-b border-slate-200/70">
-                    <p className="text-sm font-medium text-slate-700">Agent Timeline</p>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Track each agent step for the current message.
-                    </p>
-                  </div>
-                  <div className="flex-1 overflow-hidden">
-                    <AgentTimelinePanel sessionId={currentMessageId} />
                   </div>
                 </div>
               )}

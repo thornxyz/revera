@@ -47,6 +47,7 @@ class AgentOutput:
     def to_dict(self) -> dict:
         """Convert to dictionary for logging."""
         return {
+            "agent": self.agent_name,  # Frontend expects 'agent'
             "agent_name": self.agent_name,
             "result": self.result,
             "metadata": self.metadata,

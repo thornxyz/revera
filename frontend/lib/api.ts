@@ -233,10 +233,18 @@ export interface Message {
     user_id: string;
     query: string;
     answer: string;
+    thinking?: string;
+    agent_timeline?: AgentStep[];
     sources: Source[];
     verification: Verification;
     confidence: string;
     created_at: string;
+}
+
+export interface AgentStep {
+    agent: string;
+    latency_ms: number;
+    events: Record<string, any>;
 }
 
 export interface ChatQueryRequest {
