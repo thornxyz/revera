@@ -6,6 +6,16 @@ from operator import add
 from app.agents.planner import ExecutionPlan
 
 
+class ImageContextState(TypedDict):
+    """Image context for multimodal processing."""
+
+    document_id: str
+    filename: str
+    storage_path: str
+    description: str
+    mime_type: str
+
+
 class ResearchState(TypedDict):
     """
     State that flows through the LangGraph research workflow.
@@ -29,6 +39,9 @@ class ResearchState(TypedDict):
 
     # Web search outputs
     web_sources: list[dict]
+
+    # Image context for multimodal synthesis
+    image_contexts: list[ImageContextState]
 
     # Synthesis outputs
     synthesis_result: dict | None

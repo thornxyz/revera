@@ -21,7 +21,9 @@ CREATE TABLE documents (
     user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
     chat_id UUID REFERENCES chats(id) ON DELETE CASCADE,
     filename TEXT NOT NULL,
+    type VARCHAR(10) DEFAULT 'pdf',  -- 'pdf' or 'image'
     file_path TEXT,
+    image_url TEXT,  -- Supabase Storage path for images
     metadata JSONB DEFAULT '{}',
     created_at TIMESTAMPTZ DEFAULT now()
 );

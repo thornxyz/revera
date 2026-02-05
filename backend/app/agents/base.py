@@ -12,12 +12,26 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class ImageContext:
+    """Image context for multimodal agents."""
+
+    document_id: str
+    filename: str
+    storage_path: str  # Supabase Storage path
+    description: str  # Generated text description
+    mime_type: str = "image/jpeg"
+
+
+@dataclass
 class AgentInput:
     """Standard input for all agents."""
 
     query: str
     context: dict = field(default_factory=dict)
     constraints: dict = field(default_factory=dict)
+    images: list[ImageContext] = field(
+        default_factory=list
+    )  # Image context for multimodal
 
 
 @dataclass

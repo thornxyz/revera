@@ -292,23 +292,21 @@ class GeminiClient:
                     for candidate in chunk.candidates:
                         if hasattr(candidate, "content") and candidate.content:
                             for part in candidate.content.parts or []:
-                                # Yield thought content if present (must be string, not bool)
-                                if hasattr(part, "thought") and part.thought:
-                                    if isinstance(part.thought, str):
-                                        logger.info(
-                                            f"[Gemini] Thought chunk: {len(part.thought)} chars"
-                                        )
-                                        yield {
-                                            "type": "thought",
-                                            "content": part.thought,
-                                        }
-                                    else:
-                                        logger.info(
-                                            f"[Gemini] Skipping non-string thought: "
-                                            f"type={type(part.thought).__name__}, value={part.thought}"
-                                        )
-                                # Yield text content
-                                if hasattr(part, "text") and part.text:
+                                # Skip parts without text
+                                if not hasattr(part, "text") or not part.text:
+                                    continue
+
+                                # Check if this is a thought part (part.thought is a boolean flag)
+                                if hasattr(part, "thought") and part.thought is True:
+                                    logger.info(
+                                        f"[Gemini] Thought chunk: {len(part.text)} chars"
+                                    )
+                                    yield {
+                                        "type": "thought",
+                                        "content": part.text,
+                                    }
+                                else:
+                                    # Regular text content
                                     yield {"type": "text", "content": part.text}
                 # Fallback: use chunk.text directly
                 elif hasattr(chunk, "text") and chunk.text:
@@ -318,6 +316,211 @@ class GeminiClient:
 
         except Exception as e:
             logger.error(f"[Gemini] Error in streaming generation: {e}", exc_info=True)
+            raise
+
+    # =========================================
+    # Multimodal (Image) Methods
+    # =========================================
+
+    async def generate_image_description(
+        self,
+        image_bytes: bytes,
+        mime_type: str,
+    ) -> str:
+        """
+        Generate a detailed text description from an image for RAG indexing.
+
+        Uses Gemini Vision to extract searchable content from the image.
+
+        Args:
+            image_bytes: Raw image bytes
+            mime_type: MIME type (e.g., "image/jpeg", "image/png")
+
+        Returns:
+            Detailed text description of the image
+        """
+        try:
+            # Use v1alpha for media_resolution support
+            settings = get_settings()
+            vision_client = genai.Client(
+                api_key=settings.gemini_api_key,
+                http_options={"api_version": "v1alpha"},
+            )
+
+            prompt = """Analyze this image and provide a detailed description for search indexing.
+Include:
+1. Main subjects and objects visible
+2. Text or labels if any (transcribe exactly)
+3. Colors, layout, and visual structure
+4. Context and purpose of the image
+5. Any diagrams, charts, or data visualizations
+
+Be thorough but factual - only describe what you can see."""
+
+            response = await vision_client.aio.models.generate_content(
+                model=self.model,
+                contents=[
+                    types.Content(
+                        parts=[
+                            types.Part(text=prompt),
+                            types.Part(
+                                inline_data=types.Blob(
+                                    mime_type=mime_type,
+                                    data=image_bytes,
+                                ),
+                            ),
+                        ]
+                    )
+                ],
+                config=types.GenerateContentConfig(
+                    temperature=0.3,  # Lower temp for factual description
+                    max_output_tokens=2048,
+                ),
+            )
+
+            description = response.text or ""
+            logger.info(
+                f"[Gemini] Generated image description: {len(description)} chars"
+            )
+            return description
+
+        except Exception as e:
+            logger.error(
+                f"[Gemini] Error generating image description: {e}", exc_info=True
+            )
+            raise
+
+    async def generate_with_images(
+        self,
+        prompt: str,
+        images: list[dict],
+        system_instruction: str | None = None,
+        temperature: float = 1.0,
+        max_tokens: int = 4096,
+    ) -> str:
+        """
+        Generate a response using text prompt and images (multimodal synthesis).
+
+        Args:
+            prompt: Text prompt/question
+            images: List of dicts with 'bytes' and 'mime_type' keys
+            system_instruction: Optional system instruction
+            temperature: Sampling temperature (default 1.0 for Gemini 3)
+            max_tokens: Maximum output tokens
+
+        Returns:
+            Generated text response
+        """
+        try:
+            # Build multimodal content parts
+            parts: list[types.Part] = [types.Part(text=prompt)]
+
+            for img in images:
+                parts.append(
+                    types.Part.from_bytes(
+                        data=img["bytes"],
+                        mime_type=img["mime_type"],
+                    )
+                )
+
+            config = types.GenerateContentConfig(
+                temperature=temperature,
+                max_output_tokens=max_tokens,
+            )
+
+            if system_instruction:
+                config.system_instruction = system_instruction
+
+            response = await self.client.aio.models.generate_content(
+                model=self.model,
+                contents=[types.Content(parts=parts)],
+                config=config,
+            )
+
+            return response.text or ""
+
+        except Exception as e:
+            logger.error(f"[Gemini] Error in multimodal generation: {e}", exc_info=True)
+            raise
+
+    async def generate_stream_with_images(
+        self,
+        prompt: str,
+        images: list[dict],
+        system_instruction: str | None = None,
+        temperature: float = 1.0,
+        max_tokens: int = 4096,
+        include_thoughts: bool = True,
+    ):
+        """
+        Stream a response using text prompt and images (multimodal streaming).
+
+        Yields dicts with 'type' and 'content' like generate_stream.
+
+        Args:
+            prompt: Text prompt/question
+            images: List of dicts with 'bytes' and 'mime_type' keys
+            system_instruction: Optional system instruction
+            temperature: Sampling temperature
+            max_tokens: Maximum output tokens
+            include_thoughts: Whether to include thinking tokens
+
+        Yields:
+            dict: {"type": "thought"|"text", "content": str}
+        """
+        try:
+            # Build multimodal content parts
+            parts: list[types.Part] = [types.Part(text=prompt)]
+
+            for img in images:
+                parts.append(
+                    types.Part.from_bytes(
+                        data=img["bytes"],
+                        mime_type=img["mime_type"],
+                    )
+                )
+
+            config = types.GenerateContentConfig(
+                temperature=temperature,
+                max_output_tokens=max_tokens,
+            )
+
+            if system_instruction:
+                config.system_instruction = system_instruction
+
+            if include_thoughts:
+                config.thinking_config = types.ThinkingConfig(
+                    include_thoughts=True,
+                    thinking_level=self.thinking_level,  # type: ignore
+                )
+
+            response_stream = await self.client.aio.models.generate_content_stream(
+                model=self.model,
+                contents=[types.Content(parts=parts)],
+                config=config,
+            )
+
+            async for chunk in response_stream:
+                if hasattr(chunk, "candidates") and chunk.candidates:
+                    for candidate in chunk.candidates:
+                        if hasattr(candidate, "content") and candidate.content:
+                            for part in candidate.content.parts or []:
+                                # Skip parts without text
+                                if not hasattr(part, "text") or not part.text:
+                                    continue
+
+                                # part.thought is a boolean flag, content is in part.text
+                                if hasattr(part, "thought") and part.thought is True:
+                                    yield {"type": "thought", "content": part.text}
+                                else:
+                                    yield {"type": "text", "content": part.text}
+                elif hasattr(chunk, "text") and chunk.text:
+                    yield {"type": "text", "content": chunk.text}
+
+            logger.info("[Gemini] Multimodal stream complete")
+
+        except Exception as e:
+            logger.error(f"[Gemini] Error in multimodal streaming: {e}", exc_info=True)
             raise
 
 

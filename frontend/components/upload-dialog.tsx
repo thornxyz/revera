@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Upload, File, X, CheckCircle, AlertCircle } from "lucide-react";
+import { Upload, File, X, CheckCircle, AlertCircle, ImageIcon } from "lucide-react";
 import { toast } from "sonner";
 import {
     Dialog,
@@ -13,6 +13,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { uploadDocument } from "@/lib/api";
 
+// Supported file types
+const SUPPORTED_EXTENSIONS = [".pdf", ".png", ".jpg", ".jpeg", ".webp", ".gif"];
+const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".gif"];
+
 interface UploadDialogProps {
     open: boolean;
     chatId: string | null;
@@ -23,31 +27,59 @@ interface UploadDialogProps {
 
 export function UploadDialog({ open, chatId, onOpenChange, onUploadSuccess, onChatCreated }: UploadDialogProps) {
     const [file, setFile] = useState<File | null>(null);
+    const [imagePreview, setImagePreview] = useState<string | null>(null);
     const [uploading, setUploading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState(false);
 
+    const getFileExtension = (filename: string): string => {
+        const parts = filename.toLowerCase().split('.');
+        return parts.length > 1 ? `.${parts.pop()}` : '';
+    };
+
+    const isImageFile = (filename: string): boolean => {
+        return IMAGE_EXTENSIONS.includes(getFileExtension(filename));
+    };
+
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const selectedFile = e.target.files?.[0];
         if (selectedFile) {
+            const ext = getFileExtension(selectedFile.name);
+            const isImage = IMAGE_EXTENSIONS.includes(ext);
+
             // Validate file type
-            if (!selectedFile.name.toLowerCase().endsWith('.pdf')) {
-                setError("Only PDF files are supported");
+            if (!SUPPORTED_EXTENSIONS.includes(ext)) {
+                setError(`Unsupported file type. Supported: ${SUPPORTED_EXTENSIONS.join(', ')}`);
                 toast.error("Invalid file type", {
-                    description: "Only PDF files are supported",
+                    description: "Supported formats: PDF, PNG, JPG, JPEG, WebP, GIF",
                 });
                 return;
             }
-            // Validate file size (50MB limit)
-            if (selectedFile.size > 50 * 1024 * 1024) {
-                setError("File size must be less than 50MB");
+
+            // Validate file size (50MB for PDFs, 10MB for images)
+            const maxSize = isImage ? 10 * 1024 * 1024 : 50 * 1024 * 1024;
+            if (selectedFile.size > maxSize) {
+                const maxMB = maxSize / (1024 * 1024);
+                setError(`File size must be less than ${maxMB}MB`);
                 toast.error("File too large", {
-                    description: "Maximum file size is 50MB",
+                    description: `Maximum size is ${maxMB}MB for ${isImage ? 'images' : 'PDFs'}`,
                 });
                 return;
             }
+
             setFile(selectedFile);
             setError(null);
+
+            // Generate preview for images
+            if (isImage) {
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    setImagePreview(reader.result as string);
+                };
+                reader.readAsDataURL(selectedFile);
+            } else {
+                setImagePreview(null);
+            }
         }
     };
 
@@ -60,20 +92,23 @@ export function UploadDialog({ open, chatId, onOpenChange, onUploadSuccess, onCh
         try {
             // Upload with optional chatId (backend will auto-create if not provided)
             const result = await uploadDocument(file, chatId || undefined);
-            
+
             // If chat was auto-created, notify parent
+            const isImage = isImageFile(result.filename);
+            const displayName = result.filename.replace(/\.(pdf|png|jpg|jpeg|webp|gif)$/i, '');
+
             if (!chatId && result.chat_id) {
                 onChatCreated?.(result.chat_id, result.filename);
                 toast.success("New chat created", {
-                    description: `Chat created with: ${result.filename.replace(/\.pdf$/i, '')}`,
+                    description: `Chat created with: ${displayName}`,
                 });
             } else {
                 // Regular upload to existing chat
-                toast.success("Document uploaded", {
+                toast.success(isImage ? "Image uploaded" : "Document uploaded", {
                     description: `${result.filename} has been processed and indexed`,
                 });
             }
-            
+
             setSuccess(true);
             setTimeout(() => {
                 onUploadSuccess?.();
@@ -92,6 +127,7 @@ export function UploadDialog({ open, chatId, onOpenChange, onUploadSuccess, onCh
 
     const handleClose = () => {
         setFile(null);
+        setImagePreview(null);
         setError(null);
         setSuccess(false);
         setUploading(false);
@@ -104,12 +140,12 @@ export function UploadDialog({ open, chatId, onOpenChange, onUploadSuccess, onCh
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2">
                         <Upload className="h-5 w-5 text-emerald-500" />
-                        Upload Document
+                        Upload Document or Image
                     </DialogTitle>
                     <DialogDescription className="text-slate-500">
-                        {chatId 
-                            ? "Upload a PDF document to add to this chat's knowledge base."
-                            : "Upload a PDF document. A new chat will be created automatically."
+                        {chatId
+                            ? "Upload a PDF or image to add to this chat's knowledge base."
+                            : "Upload a PDF or image. A new chat will be created automatically."
                         }
                     </DialogDescription>
                 </DialogHeader>
@@ -124,13 +160,13 @@ export function UploadDialog({ open, chatId, onOpenChange, onUploadSuccess, onCh
                                     <span className="font-semibold">Click to upload</span> or drag and drop
                                 </p>
                                 <p className="text-xs text-slate-500 mt-1">
-                                    PDF files only (max 50MB)
+                                    PDF, PNG, JPG, WebP, GIF (max 50MB PDF / 10MB images)
                                 </p>
                             </div>
                             <input
                                 type="file"
                                 className="hidden"
-                                accept=".pdf"
+                                accept=".pdf,.png,.jpg,.jpeg,.webp,.gif"
                                 onChange={handleFileChange}
                             />
                         </label>
@@ -139,7 +175,17 @@ export function UploadDialog({ open, chatId, onOpenChange, onUploadSuccess, onCh
                     {/* Selected File */}
                     {file && !success && (
                         <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
-                            <File className="h-8 w-8 text-emerald-500" />
+                            {imagePreview ? (
+                                <img
+                                    src={imagePreview}
+                                    alt="Preview"
+                                    className="h-12 w-12 rounded object-cover"
+                                />
+                            ) : isImageFile(file.name) ? (
+                                <ImageIcon className="h-8 w-8 text-blue-500" />
+                            ) : (
+                                <File className="h-8 w-8 text-emerald-500" />
+                            )}
                             <div className="flex-1 min-w-0">
                                 <p
                                     className="text-sm font-medium break-all leading-snug text-slate-700"
@@ -148,11 +194,14 @@ export function UploadDialog({ open, chatId, onOpenChange, onUploadSuccess, onCh
                                     {file.name}
                                 </p>
                                 <p className="text-xs text-slate-500">
-                                    {(file.size / 1024 / 1024).toFixed(2)} MB
+                                    {(file.size / 1024 / 1024).toFixed(2)} MB • {isImageFile(file.name) ? 'Image' : 'PDF'}
                                 </p>
                             </div>
                             <button
-                                onClick={() => setFile(null)}
+                                onClick={() => {
+                                    setFile(null);
+                                    setImagePreview(null);
+                                }}
                                 className="text-slate-400 hover:text-slate-600"
                                 disabled={uploading}
                             >

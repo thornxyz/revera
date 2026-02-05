@@ -6,8 +6,9 @@ import json
 import logging
 from typing import AsyncGenerator
 
-from app.agents.base import BaseAgent, AgentInput, AgentOutput
+from app.agents.base import BaseAgent, AgentInput, AgentOutput, ImageContext
 from app.llm.gemini import get_gemini_client
+from app.services.image_ingestion import get_image_ingestion_service
 
 logger = logging.getLogger(__name__)
 
@@ -57,12 +58,19 @@ REASONING PROCESS (think through these before writing):
 3. Are there any contradictions between sources?
 4. What is my confidence level based on source quality and agreement?
 
+WHEN IMAGES ARE PROVIDED:
+1. Analyze the visual content directly - describe what you see
+2. Reference images using [Image N] format
+3. Connect visual observations to any text sources
+4. Note any details in images that answer the question
+
 CITATION RULES (CRITICAL):
 1. ONLY use information explicitly stated in the provided sources
 2. Every factual claim MUST have an inline citation using [Source N] format
-3. If sources conflict, acknowledge both perspectives with their citations
-4. If information is not available, explicitly state "I could not find information about X"
-5. NEVER infer, assume, or extrapolate beyond what sources explicitly state
+3. Reference images with [Image N] format when describing visual content
+4. If sources conflict, acknowledge both perspectives with their citations
+5. If information is not available, explicitly state "I could not find information about X"
+6. NEVER infer, assume, or extrapolate beyond what sources explicitly state
 
 FORMATTING:
 1. Use markdown formatting: headers (##), bullet points, bold for emphasis
@@ -71,8 +79,7 @@ FORMATTING:
 4. Note any limitations or gaps in the available information
 5. For complex topics, use sections for clarity
 
-Write a well-formatted markdown response with inline citations. Do NOT wrap in JSON.
-"""
+Write a well-formatted markdown response with inline citations. Do NOT wrap in JSON."""
 
 
 CONCISE_QUERY_PATTERNS = (
@@ -96,6 +103,7 @@ class SynthesisAgent(BaseAgent):
 
     def __init__(self):
         self.gemini = get_gemini_client()
+        self.image_service = get_image_ingestion_service()
 
     @staticmethod
     def _should_be_concise(query: str) -> bool:
@@ -151,6 +159,20 @@ class SynthesisAgent(BaseAgent):
                 "title": source.get("title"),
             }
             source_num += 1
+
+        # Add image sources (text descriptions for context)
+        image_num = 1
+        for image in input.images:
+            context_parts.append(
+                f"[Image {image_num}] (Image: {image.filename})\nDescription: {image.description}"
+            )
+            source_map[f"image_{image_num}"] = {
+                "type": "image",
+                "document_id": image.document_id,
+                "filename": image.filename,
+                "storage_path": image.storage_path,
+            }
+            image_num += 1
 
         context_text = "\n\n---\n\n".join(context_parts)
 
@@ -287,7 +309,40 @@ Produce a well-cited answer in JSON format."""
             }
             source_num += 1
 
+        # Add image sources (text descriptions as context reference)
+        image_num = 1
+        image_bytes_list: list[dict] = []  # For multimodal API
+        for image in input.images:
+            context_parts.append(
+                f"[Image {image_num}] (Image: {image.filename})\nDescription: {image.description}"
+            )
+            source_map[f"image_{image_num}"] = {
+                "type": "image",
+                "document_id": image.document_id,
+                "filename": image.filename,
+                "storage_path": image.storage_path,
+            }
+            # Load image bytes for multimodal API
+            try:
+                img_bytes = await self.image_service.get_image_bytes(image.storage_path)
+                if img_bytes:
+                    image_bytes_list.append(
+                        {
+                            "bytes": img_bytes,
+                            "mime_type": image.mime_type,
+                        }
+                    )
+                    logger.info(
+                        f"[{self.name}] Loaded image {image_num}: {image.filename}"
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"[{self.name}] Failed to load image {image.filename}: {e}"
+                )
+            image_num += 1
+
         context_text = "\n\n---\n\n".join(context_parts)
+        has_images = len(image_bytes_list) > 0
 
         # Build the prompt for streaming (markdown output, not JSON)
         prompt = f"""Answer this research question based on the provided context:
@@ -301,17 +356,34 @@ Context:
 
 Write a well-formatted markdown answer with inline [Source N] citations."""
 
-        # Stream the answer
+        # Stream the answer (multimodal if images present)
         full_answer = ""
         full_thoughts = ""
         try:
-            async for chunk in self.gemini.generate_stream(
-                prompt=prompt,
-                system_instruction=SYNTHESIS_STREAMING_PROMPT,
-                temperature=0.5,
-                max_tokens=3072,
-                include_thoughts=True,
-            ):
+            if has_images:
+                # Use multimodal streaming with images
+                logger.info(
+                    f"[{self.name}] Using multimodal stream with {len(image_bytes_list)} images"
+                )
+                stream = self.gemini.generate_stream_with_images(
+                    prompt=prompt,
+                    images=image_bytes_list,
+                    system_instruction=SYNTHESIS_STREAMING_PROMPT,
+                    temperature=1.0,  # Gemini 3 default
+                    max_tokens=3072,
+                    include_thoughts=True,
+                )
+            else:
+                # Use text-only streaming
+                stream = self.gemini.generate_stream(
+                    prompt=prompt,
+                    system_instruction=SYNTHESIS_STREAMING_PROMPT,
+                    temperature=0.5,
+                    max_tokens=3072,
+                    include_thoughts=True,
+                )
+
+            async for chunk in stream:
                 chunk_type = chunk.get("type", "text")
                 chunk_content = chunk.get("content", "")
 

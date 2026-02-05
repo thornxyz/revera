@@ -42,7 +42,7 @@ export function DocumentsPanel({ chatId, onDocumentSelect, refreshToken }: Docum
 
     const fetchDocuments = async () => {
         if (!chatId) return;
-        
+
         setIsLoading(true);
         try {
             const data = await listDocuments(chatId);
@@ -144,7 +144,11 @@ export function DocumentsPanel({ chatId, onDocumentSelect, refreshToken }: Docum
                                     >
                                         <CardContent className="p-3">
                                             <div className="flex items-start gap-2">
-                                                <span className="text-lg">📄</span>
+                                                {doc.type === "image" ? (
+                                                    <span className="text-lg" title="Image">🖼️</span>
+                                                ) : (
+                                                    <span className="text-lg" title="PDF Document">📄</span>
+                                                )}
                                                 <div className="flex-1 min-w-0">
                                                     <p
                                                         className="text-sm font-medium leading-snug whitespace-normal break-words"
@@ -153,7 +157,7 @@ export function DocumentsPanel({ chatId, onDocumentSelect, refreshToken }: Docum
                                                         {doc.filename}
                                                     </p>
                                                     <p className="text-xs text-slate-500">
-                                                        {new Date(doc.created_at).toLocaleDateString()}
+                                                        {doc.type === "image" ? "Image" : "PDF"} · {new Date(doc.created_at).toLocaleDateString()}
                                                     </p>
                                                 </div>
                                                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">

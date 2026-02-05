@@ -19,7 +19,10 @@ export interface Source {
     title?: string;
     content: string;
     score: number;
-    type: "internal" | "web";
+    type: "internal" | "web" | "image";
+    // Image-specific fields
+    filename?: string;
+    storage_path?: string;
 }
 
 export interface Verification {
@@ -51,7 +54,9 @@ export interface AgentTimeline {
 export interface Document {
     id: string;
     filename: string;
+    type: "pdf" | "image";
     chat_id: string | null;
+    image_url: string | null;
     created_at: string;
 }
 
@@ -111,10 +116,10 @@ export async function uploadDocument(file: File, chatId?: string): Promise<Docum
     formData.append("file", file);
 
     // Build URL with optional chat_id parameter
-    const url = chatId 
+    const url = chatId
         ? `${API_BASE_URL}/api/documents/upload?chat_id=${chatId}`
         : `${API_BASE_URL}/api/documents/upload`;
-    
+
     const response = await fetch(url, {
         method: "POST",
         headers,
@@ -133,7 +138,7 @@ export async function listDocuments(chatId?: string): Promise<{
     total: number;
 }> {
     const headers = await getAuthHeaders();
-    const url = chatId 
+    const url = chatId
         ? `${API_BASE_URL}/api/documents/?chat_id=${chatId}`
         : `${API_BASE_URL}/api/documents/`;
     const response = await fetch(url, { headers });
@@ -402,7 +407,7 @@ export async function sendChatMessageStream(
     const decoder = new TextDecoder();
     let buffer = "";
     let streamCompleted = false;
-    
+
     console.log('[API] Stream reader initialized, starting to read events...');
 
     try {
@@ -495,7 +500,7 @@ export async function pollVerificationStatus(
     let attempt = 0;
     let delay = 2000;  // Start with 2s
     const maxDelay = 10000;  // Cap at 10s
-    
+
     const poll = async () => {
         try {
             const headers = await getAuthHeaders();
@@ -503,7 +508,7 @@ export async function pollVerificationStatus(
                 `${API_BASE_URL}/api/chats/${chatId}/messages/${messageId}/verification`,
                 { headers }
             );
-            
+
             if (response.status === 200) {
                 // Verification complete (either "verified" or "error")
                 const data = await response.json();
@@ -529,26 +534,26 @@ export async function pollVerificationStatus(
             return false;
         }
     };
-    
+
     // Infinite polling loop with exponential backoff
     while (true) {
         const done = await poll();
-        
+
         if (done) {
             console.log(`[Polling] Verification complete after ${attempt + 1} attempts`);
             return;
         }
-        
+
         // Wait before next poll
         await new Promise(resolve => setTimeout(resolve, delay));
-        
+
         // Exponential backoff: 2s → 4s → 8s → 10s (capped)
         attempt++;
         if (attempt < 3) {  // First 3 attempts use exponential backoff
             delay = Math.min(delay * 2, maxDelay);
         }
         // After that, stay at maxDelay (10s between polls)
-        
+
         console.log(`[Polling] Verification still pending, retry in ${delay / 1000}s (attempt ${attempt + 1})`);
     }
 }

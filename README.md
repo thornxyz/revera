@@ -14,82 +14,98 @@ flowchart TB
     end
 
     subgraph API["API Layer (FastAPI)"]
-        ResearchAPI["/api/research/query<br/>/api/research/query/stream"]
-        DocumentsAPI["/api/documents/*"]
+        ResearchAPI["/api/research/*"]
+        DocumentsAPI["/api/documents/*<br/>(PDF + Images)"]
         HistoryAPI["/api/research/history/*"]
-        ChatsAPI["/api/chats/*<br/>(CRUD + Cleanup)"]
+        ChatsAPI["/api/chats/*<br/>(Query + CRUD)"]
     end
 
-    subgraph LangGraph["LangGraph Workflow"]
+    subgraph LangGraph["LangGraph Workflow (Orchestrator)"]
         Planner["🎯 Planning<br/>(Query Analysis)"]
         Retrieval["📚 Retrieval<br/>(Hybrid RAG)"]
         WebSearch["🌐 Web Search<br/>(Tavily)"]
-        Synthesis["✍️ Synthesis<br/>(Generate Answer)"]
+        Synthesis["✍️ Synthesis<br/>(Multimodal Answer)"]
         Critic["🔍 Critic<br/>(Verify & Rate)"]
         
         Planner --> Retrieval
-        Retrieval -->|parallel| WebSearch
+        Retrieval --> WebSearch
         Retrieval --> Synthesis
         WebSearch --> Synthesis
         Synthesis --> Critic
-        Critic -->|low confidence| Synthesis
+        Critic -->|needs refinement| Synthesis
         Critic -->|verified| End[END]
     end
 
     subgraph Services["Core Services"]
         Ingestion["Document Ingestion<br/>(PDF → Chunks)"]
+        ImageIngest["Image Ingestion<br/>(Vision → Embeddings)"]
         HybridRAG["Triple Hybrid Search<br/>(Dense + Sparse + ColBERT)"]
-        Cleanup["Chat Cleanup Service<br/>(Comprehensive Deletion)"]
+        TitleGen["Title Generator<br/>(Auto-naming)"]
+        Cleanup["Chat Cleanup<br/>(Cascade Delete)"]
     end
 
     subgraph External["External APIs"]
-        Gemini["Google Gemini<br/>(Embeddings + LLM w/ Thinking)"]
+        Gemini["Google Gemini<br/>(Embeddings + LLM + Vision)"]
         Tavily["Tavily API<br/>(Web Search)"]
     end
 
     subgraph Data["Data Layer"]
         Supabase[(Supabase<br/>Auth & Metadata)]
+        Storage[(Supabase Storage<br/>Images)]
         Qdrant[(Qdrant<br/>Vector DB)]
         Memory[(InMemoryStore<br/>Agent Memories)]
     end
 
     UI --> ResearchAPI
+    UI --> ChatsAPI
     DocPanel --> DocumentsAPI
     Timeline --> ResearchAPI
     ChatList --> ChatsAPI
     
     ResearchAPI --> Planner
+    ChatsAPI --> Planner
     DocumentsAPI --> Ingestion
+    DocumentsAPI --> ImageIngest
     ChatsAPI --> Cleanup
     
+    Planner --> Gemini
     Retrieval --> HybridRAG
     WebSearch --> Tavily
+    Synthesis --> Gemini
+    Critic --> Gemini
     
     HybridRAG --> Qdrant
     Ingestion --> Gemini
     Ingestion --> Qdrant
-    Synthesis --> Gemini
-    Critic --> Gemini
+    Ingestion --> Supabase
+    ImageIngest --> Gemini
+    ImageIngest --> Storage
+    ImageIngest --> Qdrant
+    ImageIngest --> Supabase
+    Synthesis --> Storage
     Planner --> Memory
     Synthesis --> Memory
+    TitleGen --> Gemini
     
     Cleanup --> Supabase
+    Cleanup --> Storage
     Cleanup --> Qdrant
     Cleanup --> Memory
-    Supabase --> Ingestion
     ResearchAPI --> Supabase
+    ChatsAPI --> Supabase
 ```
 
 ## Key Features
 
 - **🔍 Triple Hybrid RAG**: Combines Dense (semantic), Sparse (keyword), and ColBERT (late interaction) retrieval with **Reciprocal Rank Fusion (RRF)** for superior accuracy
 - **🧠 Thinking Mode**: Gemini 3's native thinking capability streams reasoning tokens in real-time for transparency
+- **🖼️ Image Context**: Upload images alongside PDFs - Gemini 3 Vision analyzes images for multimodal research answers
 - **🤖 Multi-Agent Orchestration**: LangGraph workflow with planning, retrieval, web search, synthesis, and critic agents
 - **🌐 Live Web Search**: Tavily API integration with conditional routing based on information needs
 - **♻️ Iterative Refinement**: Critic agent verifies answers and triggers re-synthesis for low-confidence results
 - **⚡ Parallel Execution**: Async operations and concurrent embedding generation (~3x speedup)
 - **📊 Real-Time Streaming**: SSE for live agent progress, answer chunks, and reasoning tokens
-- **📚 Document Management**: Upload, index, and search PDF documents with triple embeddings
+- **📚 Document Management**: Upload, index, and search PDFs and images with triple embeddings
 - **💬 Chat Management**: Multi-turn conversations with comprehensive data cleanup on deletion
 - **🔐 Secure Authentication**: Google OAuth via Supabase with row-level security
 
@@ -196,7 +212,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/documents/upload?chat_id={id}` | Upload PDF (auto-creates chat if no `chat_id`) |
+| POST | `/api/documents/upload?chat_id={id}` | Upload PDF or image (PNG/JPG/WebP/GIF) - auto-creates chat if no `chat_id` |
 | GET | `/api/documents/?chat_id={id}` | List documents (optional chat filter) |
 | DELETE | `/api/documents/{id}` | Delete document and embeddings |
 
