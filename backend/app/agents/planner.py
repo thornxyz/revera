@@ -3,30 +3,12 @@
 import time
 import json
 import logging
-from dataclasses import dataclass
 
 from app.agents.base import BaseAgent, AgentInput, AgentOutput
+from app.agents.agent_models import ExecutionStep, ExecutionPlan
 from app.llm.gemini import get_gemini_client
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class PlanStep:
-    """A single step in the execution plan."""
-
-    tool: str  # "rag", "web", "synthesis", "verification"
-    description: str
-    parameters: dict
-
-
-@dataclass
-class ExecutionPlan:
-    """The complete execution plan for a query."""
-
-    subtasks: list[str]
-    steps: list[PlanStep]
-    constraints: dict
 
 
 PLANNER_SYSTEM_PROMPT = """You are a research planning agent. Your job is to analyze user queries and create structured execution plans.
@@ -157,8 +139,8 @@ Output the plan as JSON."""
         plan = ExecutionPlan(
             subtasks=plan_dict.get("subtasks", []),
             steps=[
-                PlanStep(
-                    tool=s.get("tool", ""),
+                ExecutionStep(
+                    tool=s.get("tool", "rag"),
                     description=s.get("description", ""),
                     parameters=s.get("parameters", {}),
                 )

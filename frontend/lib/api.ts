@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/client";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const DEBUG = process.env.NODE_ENV === "development";
 
 export interface ResearchResponse {
     session_id: string;
@@ -254,7 +255,7 @@ export interface ChatQueryResponse {
 }
 
 export async function listChats(): Promise<ChatWithPreview[]> {
-    console.log('[API] Listing chats');
+    if (DEBUG) console.log('[API] Listing chats');
     const headers = await getAuthHeaders();
     const response = await fetch(`${API_BASE_URL}/api/chats/`, { headers });
 
@@ -264,12 +265,12 @@ export async function listChats(): Promise<ChatWithPreview[]> {
     }
 
     const chats = await response.json();
-    console.log(`[API] Retrieved ${chats.length} chats`);
+    if (DEBUG) console.log(`[API] Retrieved ${chats.length} chats`);
     return chats;
 }
 
 export async function createChat(title?: string): Promise<Chat> {
-    console.log(`[API] Creating chat with title: ${title || 'None'}`);
+    if (DEBUG) console.log(`[API] Creating chat with title: ${title || 'None'}`);
     const headers = await getAuthHeaders();
     const response = await fetch(`${API_BASE_URL}/api/chats/`, {
         method: "POST",
@@ -283,7 +284,7 @@ export async function createChat(title?: string): Promise<Chat> {
     }
 
     const chat = await response.json();
-    console.log(`[API] Created chat: id=${chat.id}, title=${chat.title}`);
+    if (DEBUG) console.log(`[API] Created chat: id=${chat.id}, title=${chat.title}`);
     return chat;
 }
 
@@ -382,15 +383,17 @@ export interface ChatStreamingCallbacks extends StreamingCallbacks {
 export async function sendChatMessageStream(
     chatId: string,
     request: ChatQueryRequest,
-    callbacks?: ChatStreamingCallbacks
+    callbacks?: ChatStreamingCallbacks,
+    signal?: AbortSignal
 ): Promise<void> {
-    console.log(`[API] Starting chat message stream for chatId=${chatId}, query="${request.query.substring(0, 50)}..."`);
+    if (DEBUG) console.log(`[API] Starting chat message stream for chatId=${chatId}, query="${request.query.substring(0, 50)}..."`);
     const headers = await getAuthHeaders();
 
     const response = await fetch(`${API_BASE_URL}/api/chats/${chatId}/query/stream`, {
         method: "POST",
         headers,
         body: JSON.stringify(request),
+        signal,
     });
 
     if (!response.ok) {
@@ -408,13 +411,13 @@ export async function sendChatMessageStream(
     let buffer = "";
     let streamCompleted = false;
 
-    console.log('[API] Stream reader initialized, starting to read events...');
+    if (DEBUG) console.log('[API] Stream reader initialized, starting to read events...');
 
     try {
         while (true) {
             const { done, value } = await reader.read();
             if (done) {
-                console.log('[API] Stream reading complete');
+                if (DEBUG) console.log('[API] Stream reading complete');
                 break;
             }
 
@@ -439,11 +442,11 @@ export async function sendChatMessageStream(
 
                         switch (currentEvent) {
                             case "message_id":
-                                console.log(`[API] Received message_id: ${data.message_id}`);
+                                if (DEBUG) console.log(`[API] Received message_id: ${data.message_id}`);
                                 callbacks?.onMessageId?.(data.message_id);
                                 break;
                             case "agent_status":
-                                console.log(`[API] Agent status: ${data.node} - ${data.status}`);
+                                if (DEBUG) console.log(`[API] Agent status: ${data.node} - ${data.status}`);
                                 callbacks?.onAgentStatus?.(data.node, data.status);
                                 break;
                             case "answer_chunk":
@@ -456,7 +459,7 @@ export async function sendChatMessageStream(
                                 callbacks?.onSources?.(data.sources);
                                 break;
                             case "title_updated":
-                                console.log(`[API] Title updated: ${data.title} for chat ${data.chat_id}`);
+                                if (DEBUG) console.log(`[API] Title updated: ${data.title} for chat ${data.chat_id}`);
                                 callbacks?.onTitleUpdated?.(data.title, data.chat_id);
                                 break;
                             case "complete":
@@ -496,28 +499,34 @@ export async function pollVerificationStatus(
     chatId: string,
     messageId: string,
     onUpdate: (verification: any, confidence: string) => void,
+    signal?: AbortSignal
 ): Promise<void> {
     let attempt = 0;
     let delay = 2000;  // Start with 2s
     const maxDelay = 10000;  // Cap at 10s
 
     const poll = async () => {
+        // Check if aborted before making request
+        if (signal?.aborted) {
+            return true;  // Stop polling
+        }
+
         try {
             const headers = await getAuthHeaders();
             const response = await fetch(
                 `${API_BASE_URL}/api/chats/${chatId}/messages/${messageId}/verification`,
-                { headers }
+                { headers, signal }
             );
 
             if (response.status === 200) {
                 // Verification complete (either "verified" or "error")
                 const data = await response.json();
-                console.log(`[Polling] Verification complete: confidence=${data.confidence}`);
+                if (DEBUG) console.log(`[Polling] Verification complete: confidence=${data.confidence}`);
                 onUpdate(data.verification, data.confidence);
                 return true;  // Stop polling
             } else if (response.status === 202) {
                 // Still pending - continue polling
-                console.log(`[Polling] Verification pending (attempt ${attempt + 1})`);
+                if (DEBUG) console.log(`[Polling] Verification pending (attempt ${attempt + 1})`);
                 return false;
             } else if (response.status === 401) {
                 // Auth issue - token might be refreshing
@@ -540,7 +549,7 @@ export async function pollVerificationStatus(
         const done = await poll();
 
         if (done) {
-            console.log(`[Polling] Verification complete after ${attempt + 1} attempts`);
+            if (DEBUG) console.log(`[Polling] Verification complete after ${attempt + 1} attempts`);
             return;
         }
 
@@ -554,7 +563,7 @@ export async function pollVerificationStatus(
         }
         // After that, stay at maxDelay (10s between polls)
 
-        console.log(`[Polling] Verification still pending, retry in ${delay / 1000}s (attempt ${attempt + 1})`);
+        if (DEBUG) console.log(`[Polling] Verification still pending, retry in ${delay / 1000}s (attempt ${attempt + 1})`);
     }
 }
 

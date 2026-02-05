@@ -181,15 +181,15 @@ class IngestionService:
                 batch_size = len(points)
 
             total_batches = max(1, (len(points) + batch_size - 1) // batch_size)
-            print(
-                f"Upserting {len(points)} points to Qdrant in {total_batches} batches..."
+            logger.info(
+                f"[INGEST] Upserting {len(points)} points to Qdrant in {total_batches} batches"
             )
 
             for batch_index in range(0, len(points), batch_size):
                 batch_number = batch_index // batch_size + 1
                 batch_points = points[batch_index : batch_index + batch_size]
-                print(
-                    f"Upserting batch {batch_number}/{total_batches} ({len(batch_points)} points)..."
+                logger.debug(
+                    f"[INGEST] Upserting batch {batch_number}/{total_batches} ({len(batch_points)} points)"
                 )
 
                 # Retry logic for transient failures
@@ -204,19 +204,19 @@ class IngestionService:
                     except Exception as retry_error:
                         if attempt < max_retries - 1:
                             wait_time = 2**attempt  # Exponential backoff: 1s, 2s, 4s
-                            print(
-                                f"⚠️  Retry {attempt + 1}/{max_retries} after {wait_time}s: {retry_error}"
+                            logger.warning(
+                                f"[INGEST] Retry {attempt + 1}/{max_retries} after {wait_time}s: {retry_error}"
                             )
                             await asyncio.sleep(wait_time)
                         else:
                             raise  # Final attempt failed, re-raise
 
-            print("✅ Upsert complete!")
+            logger.info("[INGEST] Upsert complete")
             return UUID(hex=document_id)
 
         except Exception as e:
             # Rollback: Delete the orphaned document from Supabase if any processing failed
-            print(f"❌ Processing failed: {e}")
+            logger.error(f"[INGEST] Processing failed: {e}")
             logger.error(
                 f"[INGEST] Processing failed for document {document_id}, rolling back",
                 extra={"document_id": document_id, "error": str(e)},
@@ -225,14 +225,16 @@ class IngestionService:
                 self.supabase.table("documents").delete().eq(
                     "id", document_id
                 ).execute()
-                print(f"🔄 Rolled back document {document_id} from Supabase")
+                logger.info(
+                    f"[INGEST] Rolled back document {document_id} from Supabase"
+                )
             except Exception as rollback_error:
                 logger.error(
                     f"[INGEST] Failed to rollback document {document_id}",
                     extra={"rollback_error": str(rollback_error)},
                 )
-                print(
-                    f"⚠️  Warning: Failed to rollback document {document_id}: {rollback_error}"
+                logger.warning(
+                    f"[INGEST] Failed to rollback document {document_id}: {rollback_error}"
                 )
 
             raise

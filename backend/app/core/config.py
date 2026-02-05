@@ -35,6 +35,15 @@ class Settings(BaseSettings):
     qdrant_api_key: str | None = None
     qdrant_upsert_batch_size: int = 50
 
+    # Server Configuration
+    cors_origins: list[str] = ["http://localhost:3000"]
+    critic_timeout_seconds: int = 30
+    log_format: str = "text"  # "text" or "json"
+
+    # File Upload Limits
+    max_file_size_mb: int = 50  # For PDFs
+    max_image_size_mb: int = 10  # For images
+
     model_config = SettingsConfigDict(
         env_file=Path(__file__).parent.parent.parent / ".env",
         env_file_encoding="utf-8",

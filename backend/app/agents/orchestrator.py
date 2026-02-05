@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from app.agents.graph_builder import compile_research_graph
 from app.agents.graph_state import ResearchState
 from app.core.database import get_supabase_client
+from app.core.config import get_settings
 from app.core.utils import sanitize_for_postgres
 from app.services.agent_memory import get_agent_memory_service
 
@@ -208,7 +209,6 @@ class Orchestrator:
         - sources event with retrieved sources
         - complete event with final session info
         """
-        import time
         from app.agents.base import AgentInput, AgentOutput
         from app.agents.planner import PlannerAgent
         from app.agents.retrieval import RetrievalAgent
@@ -340,9 +340,11 @@ class Orchestrator:
                         "web_sources": web_sources,
                     },
                 )
-                # Add timeout to prevent hanging (30 seconds)
+                # Add timeout to prevent hanging
+                settings = get_settings()
                 critic_output = await asyncio.wait_for(
-                    critic.run(critic_input), timeout=30.0
+                    critic.run(critic_input),
+                    timeout=float(settings.critic_timeout_seconds),
                 )
                 verification = critic_output.result
                 agent_timeline.append(critic_output.to_dict())

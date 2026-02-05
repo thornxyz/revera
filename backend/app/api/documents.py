@@ -132,8 +132,15 @@ async def upload_document(
     content = await file.read()
     content_len = len(content)
 
-    # Size limits: 50MB for PDFs, 10MB for images
-    max_size = 10 * 1024 * 1024 if is_image else 50 * 1024 * 1024
+    # Size limits: configurable via settings
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    max_size = (
+        settings.max_image_size_mb * 1024 * 1024
+        if is_image
+        else settings.max_file_size_mb * 1024 * 1024
+    )
     if content_len > max_size:
         raise HTTPException(
             status_code=400,

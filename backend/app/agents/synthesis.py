@@ -417,7 +417,6 @@ Write a well-formatted markdown answer with inline [Source N] citations."""
         )
 
         # Extract sources used from the answer (look for [Source N] patterns)
-        import re
 
         sources_used = list(
             set(int(m) for m in re.findall(r"\[Source (\d+)\]", full_answer))
