@@ -490,6 +490,7 @@ async def send_chat_query_stream(
 
                 accumulated_answer = ""
                 accumulated_thinking = ""
+                message_id_from_orch = None
 
                 # Stream research with chat context
                 async for event in orchestrator.research_stream_with_context(
@@ -504,8 +505,12 @@ async def send_chat_query_stream(
                         f"[CHAT_STREAM] Event: type={event_type}, node={event.get('node', 'N/A')}"
                     )
 
-                    if event_type == "node_complete":
-                        yield f"event: agent_status\ndata: {json.dumps({'node': event.get('node'), 'status': 'complete'})}\n\n"
+                    if event_type == "message_id":
+                        message_id_from_orch = event.get("message_id")
+                        yield f"event: message_id\ndata: {json.dumps({'message_id': message_id_from_orch})}\n\n"
+
+                    elif event_type == "node_complete":
+                        yield f"event: agent_status\ndata: {json.dumps({'node': event.get('node'), 'status': event.get('status', 'complete')})}\n\n"
 
                     elif event_type == "answer_chunk":
                         content = event.get("content", "")
@@ -523,9 +528,17 @@ async def send_chat_query_stream(
                         )
                         yield f"event: sources\ndata: {json.dumps({'sources': event.get('sources', [])})}\n\n"
 
+                    elif event_type == "title_updated":
+                        yield f"event: title_updated\ndata: {json.dumps({'title': event.get('title'), 'chat_id': event.get('chat_id')})}\n\n"
+
+                    elif event_type == "error":
+                        yield f"event: error\ndata: {json.dumps({'message': event.get('message', 'Unknown error')})}\n\n"
+
                     elif event_type == "complete":
-                        # Store message in database
-                        message_id = str(UUID(event.get("session_id")))
+                        # Use message_id from early event, or fall back to session_id
+                        message_id = message_id_from_orch or str(
+                            UUID(event.get("session_id"))
+                        )
                         logger.info(
                             f"[CHAT_STREAM] Research complete, storing message_id={message_id}"
                         )
@@ -557,6 +570,9 @@ async def send_chat_query_stream(
                                 )
                                 agent_timeline = []
 
+                        # Prefer definitive answer from orchestrator over accumulated chunks
+                        final_answer = event.get("answer", accumulated_answer)
+
                         logger.info(
                             f"[CHAT_STREAM] Inserting message. Thinking len: {len(accumulated_thinking)}, Timeline len: {len(agent_timeline)}"
                         )
@@ -568,7 +584,7 @@ async def send_chat_query_stream(
                                     "chat_id": chat_id,
                                     "session_id": event.get("session_id"),
                                     "query": request.query,
-                                    "answer": accumulated_answer,
+                                    "answer": final_answer,
                                     "thinking": accumulated_thinking,
                                     "agent_timeline": agent_timeline,
                                     "role": "assistant",

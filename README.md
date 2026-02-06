@@ -7,28 +7,28 @@ A research system combining **Triple Hybrid RAG** (Dense + Sparse + ColBERT), li
 ```mermaid
 flowchart TB
     subgraph Frontend["Frontend (Next.js + React)"]
-        UI[Research UI]
+        UI[Chat & Research UI]
         Timeline[Agent Timeline]
         DocPanel[Documents Panel]
         ChatList[Chat Management]
     end
 
     subgraph API["API Layer (FastAPI)"]
-        ResearchAPI["/api/research/*"]
+        ChatsAPI["/api/chats/*<br/>(Stream + CRUD)"]
         DocumentsAPI["/api/documents/*<br/>(PDF + Images)"]
+        ResearchAPI["/api/research/*<br/>(Timeline)"]
         HistoryAPI["/api/research/history/*"]
-        ChatsAPI["/api/chats/*<br/>(Query + CRUD)"]
     end
 
-    subgraph LangGraph["LangGraph Workflow (Orchestrator)"]
+    subgraph LangGraph["LangGraph Workflow (astream_events)"]
         Planner["🎯 Planning<br/>(Query Analysis)"]
         Retrieval["📚 Retrieval<br/>(Hybrid RAG)"]
-        WebSearch["🌐 Web Search<br/>(Tavily)"]
-        Synthesis["✍️ Synthesis<br/>(Multimodal Answer)"]
+        WebSearch["🌐 Web Search<br/>(Tavily · Self-skip)"]
+        Synthesis["✍️ Synthesis<br/>(Streaming · Multimodal)"]
         Critic["🔍 Critic<br/>(Verify & Rate)"]
         
         Planner --> Retrieval
-        Retrieval --> WebSearch
+        Planner --> WebSearch
         Retrieval --> Synthesis
         WebSearch --> Synthesis
         Synthesis --> Critic
@@ -49,6 +49,11 @@ flowchart TB
         Tavily["Tavily API<br/>(Web Search)"]
     end
 
+    subgraph Local["Local Models"]
+        FastEmbed["FastEmbed<br/>(ColBERT + BM25)"]
+        SpaCy["spaCy<br/>(NLP)"]
+    end
+
     subgraph Data["Data Layer"]
         Supabase[(Supabase<br/>Auth & Metadata)]
         Storage[(Supabase Storage<br/>Images)]
@@ -56,17 +61,16 @@ flowchart TB
         Memory[(InMemoryStore<br/>Agent Memories)]
     end
 
-    UI --> ResearchAPI
+    UI -.->|SSE| ChatsAPI
     UI --> ChatsAPI
     DocPanel --> DocumentsAPI
-    Timeline --> ResearchAPI
     ChatList --> ChatsAPI
     
-    ResearchAPI --> Planner
     ChatsAPI --> Planner
+    ChatsAPI --> TitleGen
+    ChatsAPI --> Cleanup
     DocumentsAPI --> Ingestion
     DocumentsAPI --> ImageIngest
-    ChatsAPI --> Cleanup
     
     Planner --> Gemini
     Retrieval --> HybridRAG
@@ -75,23 +79,28 @@ flowchart TB
     Critic --> Gemini
     
     HybridRAG --> Qdrant
+    HybridRAG --> Gemini
+    HybridRAG --> FastEmbed
     Ingestion --> Gemini
+    Ingestion --> FastEmbed
     Ingestion --> Qdrant
     Ingestion --> Supabase
     ImageIngest --> Gemini
+    ImageIngest --> FastEmbed
     ImageIngest --> Storage
     ImageIngest --> Qdrant
     ImageIngest --> Supabase
     Synthesis --> Storage
     Planner --> Memory
     Synthesis --> Memory
-    TitleGen --> Gemini
+    TitleGen --> SpaCy
     
     Cleanup --> Supabase
     Cleanup --> Storage
     Cleanup --> Qdrant
     Cleanup --> Memory
     ResearchAPI --> Supabase
+    HistoryAPI --> Supabase
     ChatsAPI --> Supabase
 ```
 
@@ -100,13 +109,13 @@ flowchart TB
 - **🔍 Triple Hybrid RAG**: Combines Dense (semantic), Sparse (keyword), and ColBERT (late interaction) retrieval with **Reciprocal Rank Fusion (RRF)** for superior accuracy
 - **🧠 Thinking Mode**: Gemini 3's native thinking capability streams reasoning tokens in real-time for transparency
 - **🖼️ Image Context**: Upload images alongside PDFs - Gemini 3 Vision analyzes images for multimodal research answers
-- **🤖 Multi-Agent Orchestration**: LangGraph workflow with planning, retrieval, web search, synthesis, and critic agents
-- **🌐 Live Web Search**: Tavily API integration with conditional routing based on information needs
+- **🤖 Multi-Agent Orchestration**: LangGraph workflow with planning, retrieval, web search, synthesis, and critic agents via `astream_events`
+- **🌐 Live Web Search**: Tavily API with self-skip logic — runs in parallel with retrieval, skips automatically when not needed
 - **♻️ Iterative Refinement**: Critic agent verifies answers and triggers re-synthesis for low-confidence results
-- **⚡ Parallel Execution**: Async operations and concurrent embedding generation (~3x speedup)
-- **📊 Real-Time Streaming**: SSE for live agent progress, answer chunks, and reasoning tokens
-- **📚 Document Management**: Upload, index, and search PDFs and images with triple embeddings
-- **💬 Chat Management**: Multi-turn conversations with comprehensive data cleanup on deletion
+- **⚡ Parallel Fan-Out**: Retrieval + Web Search execute concurrently after planning (~3x speedup)
+- **📊 Real-Time Streaming**: SSE for live agent progress, answer/thought chunks streamed via LangGraph custom events
+- **📚 Chat-Scoped Documents**: Upload, index, and search PDFs and images — automatically scoped to the active chat
+- **💬 Chat Management**: Multi-turn conversations with comprehensive cascade cleanup on deletion
 - **🔐 Secure Authentication**: Google OAuth via Supabase with row-level security
 
 ## Tech Stack
@@ -196,8 +205,6 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/research/query` | Execute research query (non-streaming) |
-| POST | `/api/research/query/stream` | Execute research query with SSE streaming |
 | GET | `/api/research/{id}/timeline` | Get agent execution timeline |
 
 ### Session History
@@ -224,11 +231,10 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 | POST | `/api/chats/` | Create new chat |
 | GET | `/api/chats/{id}` | Get chat details |
 | PUT | `/api/chats/{id}` | Update chat (e.g., title) |
-| DELETE | `/api/chats/{id}` | **Comprehensive deletion** (see below) |
+| DELETE | `/api/chats/{id}` | **Comprehensive deletion** (cascade across DB, Qdrant, memory) |
 | GET | `/api/chats/{id}/messages` | Get all messages in chat |
 | GET | `/api/chats/{id}/messages/{msg_id}/verification` | Poll verification status |
-| POST | `/api/chats/{id}/query` | Send query within chat (non-streaming) |
-| POST | `/api/chats/{id}/query/stream` | Send query with SSE streaming |
+| POST | `/api/chats/{id}/query/stream` | Send query with SSE streaming (answer, thoughts, sources) |
 | GET | `/api/chats/{id}/memory` | Get agent memory context |
 | GET | `/api/chats/{id}/memory/{agent}` | Get memory for specific agent |
 

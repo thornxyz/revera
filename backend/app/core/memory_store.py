@@ -60,6 +60,6 @@ def get_memory_store() -> BaseStore:
     return InMemoryStore(
         index={
             "embed": get_embedding_function(),
-            "dims": 768,  # Gemini embedding-001 dimensions
+            "dims": 3072,  # Gemini embedding-001 outputs 3072-dimensional vectors
         }
     )

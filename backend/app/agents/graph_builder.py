@@ -10,7 +10,6 @@ from app.agents.graph_nodes import (
     web_search_node,
     synthesis_node,
     critic_node,
-    should_run_web_search,
     should_refine,
 )
 
@@ -19,31 +18,28 @@ logger = logging.getLogger(__name__)
 
 def build_research_graph() -> StateGraph:
     """
-    Build the LangGraph research workflow with parallel execution and conditional routing.
-    
+    Build the LangGraph research workflow with parallel execution and feedback loops.
+
     Graph structure:
-    
+
         START
-          ↓
-      planning
-          ↓
-      retrieval ──┐ (parallel)
-          ↓       │
-      web_search ─┘ (conditional, runs parallel with retrieval if needed)
-          ↓
-      synthesis
-          ↓
-       critic
-          ↓
-    (should_refine conditional edge)
-       /    \
-    synthesis  END
-    (loop)  (finish)
-    
+          |
+       planning
+        /    \\
+    retrieval  web_search   (parallel fan-out — both run concurrently)
+        \\    /
+       synthesis             (fan-in — waits for both)
+          |
+        critic
+        /    \\
+    synthesis  END           (conditional: refine or finish)
+    (loop)
+
     Key features:
-    - Parallel execution: retrieval + web_search run concurrently
-    - Conditional routing: web_search only if needed
-    - Feedback loop: critic can send back to synthesis for refinement
+    - Parallel execution: retrieval + web_search run concurrently after planning
+    - Self-managing skip: web_search returns empty if disabled/not in plan
+    - Feedback loop: critic can send back to synthesis for refinement (max 2 iterations)
+    - Streaming: synthesis dispatches answer/thought chunks via custom events
     - State management: shared ResearchState across all nodes
     """
 
@@ -61,25 +57,14 @@ def build_research_graph() -> StateGraph:
     # Set entry point
     workflow.set_entry_point("planning")
 
-    # Planning always goes to retrieval
+    # Parallel fan-out: planning feeds both retrieval AND web_search
+    # LangGraph schedules both concurrently since neither depends on the other
     workflow.add_edge("planning", "retrieval")
+    workflow.add_edge("planning", "web_search")
 
-    # After retrieval, conditionally go to web_search or directly to synthesis
-    # But we want parallel execution! So we use a "send" approach instead
-    # For now, we'll use sequential with conditional for simplicity,
-    # but mark where parallel execution will go
-
-    # From retrieval, always move to a routing decision
-    workflow.add_conditional_edges(
-        "retrieval",
-        should_run_web_search,
-        {
-            "web_search": "web_search",
-            "synthesis": "synthesis",
-        },
-    )
-
-    # Web search always goes to synthesis
+    # Fan-in: both retrieval and web_search feed into synthesis
+    # LangGraph waits for BOTH to complete before running synthesis
+    workflow.add_edge("retrieval", "synthesis")
     workflow.add_edge("web_search", "synthesis")
 
     # Synthesis always goes to critic

@@ -33,16 +33,6 @@ export interface Verification {
     criticism?: string;
 }
 
-export interface AgentTimeline {
-    session_id: string;
-    timeline: Array<{
-        agent: string;
-        events: Record<string, unknown>;
-        latency_ms: number;
-        timestamp: string;
-    }>;
-}
-
 export interface Document {
     id: string;
     filename: string;
@@ -63,20 +53,6 @@ async function getAuthHeaders(): Promise<HeadersInit> {
     };
 }
 
-
-export async function getTimeline(sessionId: string): Promise<AgentTimeline> {
-    const headers = await getAuthHeaders();
-    const response = await fetch(
-        `${API_BASE_URL}/api/research/${sessionId}/timeline`,
-        { headers }
-    );
-
-    if (!response.ok) {
-        throw new Error(`Failed to fetch timeline: ${response.statusText}`);
-    }
-
-    return response.json();
-}
 
 export async function uploadDocument(file: File, chatId?: string): Promise<Document> {
     const headers = (await getAuthHeaders()) as Record<string, string>;
@@ -218,32 +194,6 @@ export async function createChat(title?: string): Promise<Chat> {
     return chat;
 }
 
-export async function getChat(chatId: string): Promise<Chat> {
-    const headers = await getAuthHeaders();
-    const response = await fetch(`${API_BASE_URL}/api/chats/${chatId}`, { headers });
-
-    if (!response.ok) {
-        throw new Error(`Failed to get chat: ${response.statusText}`);
-    }
-
-    return response.json();
-}
-
-export async function updateChat(chatId: string, title: string): Promise<Chat> {
-    const headers = await getAuthHeaders();
-    const response = await fetch(`${API_BASE_URL}/api/chats/${chatId}`, {
-        method: "PUT",
-        headers,
-        body: JSON.stringify({ title }),
-    });
-
-    if (!response.ok) {
-        throw new Error(`Failed to update chat: ${response.statusText}`);
-    }
-
-    return response.json();
-}
-
 export async function deleteChat(chatId: string): Promise<void> {
     const headers = await getAuthHeaders();
     const response = await fetch(`${API_BASE_URL}/api/chats/${chatId}`, {
@@ -264,24 +214,6 @@ export async function getChatMessages(chatId: string): Promise<Message[]> {
 
     if (!response.ok) {
         throw new Error(`Failed to get messages: ${response.statusText}`);
-    }
-
-    return response.json();
-}
-
-
-export async function getChatMemory(
-    chatId: string,
-    agentName?: string
-): Promise<Record<string, unknown>[]> {
-    const headers = await getAuthHeaders();
-    const url = agentName
-        ? `${API_BASE_URL}/api/chats/${chatId}/memory/${agentName}`
-        : `${API_BASE_URL}/api/chats/${chatId}/memory`;
-    const response = await fetch(url, { headers });
-
-    if (!response.ok) {
-        throw new Error(`Failed to get chat memory: ${response.statusText}`);
     }
 
     return response.json();

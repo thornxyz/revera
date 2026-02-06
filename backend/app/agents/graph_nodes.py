@@ -1,20 +1,47 @@
-"""LangGraph node functions that wrap existing agents."""
+"""LangGraph node functions that wrap existing agents.
+
+Each node accepts (state, config) and dispatches custom events via
+adispatch_custom_event so the orchestrator can stream them as SSE.
+"""
 
 import logging
+from typing import Any
 
-from app.agents.base import AgentInput
+from langchain_core.callbacks.manager import adispatch_custom_event
+from langchain_core.runnables import RunnableConfig
+
+from app.agents.base import AgentInput, AgentOutput
 from app.agents.planner import PlannerAgent
 from app.agents.retrieval import RetrievalAgent
 from app.agents.web_search import WebSearchAgent
 from app.agents.synthesis import SynthesisAgent
 from app.agents.critic import CriticAgent
 from app.agents.graph_state import ResearchState
+from app.services.agent_memory import get_agent_memory_service
 
 logger = logging.getLogger(__name__)
 
 
+def _get_plan_constraints(state: ResearchState) -> dict[str, Any]:
+    """Safely extract constraints from execution plan in state."""
+    plan = state.get("execution_plan")
+    if plan is not None:
+        return plan.constraints
+    return {}
+
+
+def _get_memory_prompt(state: ResearchState, agent_name: str) -> str:
+    """Format memory context for a specific agent from state."""
+    memory_context = state.get("memory_context") or {}
+    memories = memory_context.get(agent_name, [])
+    if not memories:
+        return ""
+    memory_service = get_agent_memory_service()
+    return memory_service.format_memory_for_prompt(agent_name, memories)
+
+
 # Node: Planning
-async def planning_node(state: ResearchState) -> dict:
+async def planning_node(state: ResearchState, config: RunnableConfig) -> dict:
     """
     Analyze the query and create an execution plan.
 
@@ -24,9 +51,14 @@ async def planning_node(state: ResearchState) -> dict:
 
     planner = PlannerAgent()
 
+    memory_prompt = _get_memory_prompt(state, "planner")
+
     agent_input = AgentInput(
         query=state["query"],
-        constraints={"use_web": state["use_web"]},
+        constraints={
+            "use_web": state.get("use_web", True),
+            "memory_prompt": memory_prompt,
+        },
     )
 
     output = await planner.run(agent_input)
@@ -38,30 +70,40 @@ async def planning_node(state: ResearchState) -> dict:
 
 
 # Node: Retrieval
-async def retrieval_node(state: ResearchState) -> dict:
+async def retrieval_node(state: ResearchState, config: RunnableConfig) -> dict:
     """
     Execute hybrid RAG search on internal documents.
 
+    Dispatches a 'sources' custom event after search completes.
     Returns updates to state including internal_sources and timeline entry.
     """
     logger.info("[GRAPH] Retrieval node executing...")
 
     retrieval = RetrievalAgent(state["user_id"])
 
-    # Get constraints from execution plan
-    constraints = {}
-    if state.get("execution_plan"):
-        constraints = state["execution_plan"].constraints
+    memory_prompt = _get_memory_prompt(state, "retrieval")
+
+    constraints = _get_plan_constraints(state)
 
     agent_input = AgentInput(
         query=state["query"],
-        context={"document_ids": state.get("document_ids")},
+        context={
+            "document_ids": state.get("document_ids"),
+            "memory_prompt": memory_prompt,
+        },
         constraints=constraints,
     )
 
     output = await retrieval.run(agent_input)
 
     logger.info(f"[GRAPH] Retrieved {len(output.result)} sources")
+
+    # Dispatch sources event for real-time streaming
+    await adispatch_custom_event(
+        "sources",
+        {"sources": output.result},
+        config=config,
+    )
 
     return {
         "internal_sources": output.result,
@@ -70,20 +112,35 @@ async def retrieval_node(state: ResearchState) -> dict:
 
 
 # Node: Web Search
-async def web_search_node(state: ResearchState) -> dict:
+async def web_search_node(state: ResearchState, config: RunnableConfig) -> dict:
     """
     Execute web search using Tavily API.
 
+    Handles its own skip logic: returns empty results if web search
+    is disabled or not needed by the plan. This enables parallel
+    fan-out from planning (retrieval + web_search run concurrently).
+
+    Dispatches a 'sources' custom event after search completes.
     Returns updates to state including web_sources and timeline entry.
     """
+    # Check if web search should run
+    if not state.get("use_web", True):
+        logger.info("[GRAPH] Web search disabled by user, skipping")
+        return {"web_sources": [], "agent_timeline": []}
+
+    plan = state.get("execution_plan")
+    if plan and not any(step.tool == "web" for step in plan.steps):
+        logger.info("[GRAPH] Plan does not include web search, skipping")
+        return {"web_sources": [], "agent_timeline": []}
+
     logger.info("[GRAPH] Web search node executing...")
 
     web_search = WebSearchAgent()
 
     # Get constraints from execution plan
     constraints = {}
-    if state.get("execution_plan"):
-        constraints = state["execution_plan"].constraints
+    if plan:
+        constraints = plan.constraints
 
     agent_input = AgentInput(
         query=state["query"],
@@ -94,6 +151,14 @@ async def web_search_node(state: ResearchState) -> dict:
 
     logger.info(f"[GRAPH] Found {len(output.result)} web sources")
 
+    # Dispatch sources event for real-time streaming
+    if output.result:
+        await adispatch_custom_event(
+            "sources",
+            {"sources": output.result},
+            config=config,
+        )
+
     return {
         "web_sources": output.result,
         "agent_timeline": [output.to_dict()],
@@ -101,9 +166,12 @@ async def web_search_node(state: ResearchState) -> dict:
 
 
 # Node: Synthesis
-async def synthesis_node(state: ResearchState) -> dict:
+async def synthesis_node(state: ResearchState, config: RunnableConfig) -> dict:
     """
     Combine all retrieved context into a grounded answer.
+
+    Streams answer and thought chunks via adispatch_custom_event so the
+    orchestrator can forward them as SSE events in real time.
 
     Returns updates to state including synthesis_result and timeline entry.
     """
@@ -111,38 +179,71 @@ async def synthesis_node(state: ResearchState) -> dict:
 
     synthesis = SynthesisAgent()
 
-    # Get constraints from execution plan
-    constraints = {}
-    if state.get("execution_plan"):
-        constraints = state["execution_plan"].constraints
+    memory_prompt = _get_memory_prompt(state, "synthesis")
+
+    constraints = _get_plan_constraints(state)
+
+    context: dict[str, Any] = {
+        "internal_sources": state.get("internal_sources", []),
+        "web_sources": state.get("web_sources", []),
+    }
+    if memory_prompt:
+        context["memory_prompt"] = memory_prompt
 
     agent_input = AgentInput(
         query=state["query"],
-        context={
-            "internal_sources": state.get("internal_sources", []),
-            "web_sources": state.get("web_sources", []),
-        },
+        context=context,
         constraints=constraints,
     )
 
-    output = await synthesis.run(agent_input)
+    # Stream synthesis — dispatch chunks as custom events
+    synthesis_output: AgentOutput | None = None
 
-    logger.info(
-        f"[GRAPH] Synthesis complete with confidence: {output.result.get('confidence', 'unknown')}"
-    )
+    async for chunk in synthesis.run_stream(agent_input):
+        chunk_type = chunk.get("type")
 
+        if chunk_type == "thought_chunk":
+            await adispatch_custom_event(
+                "thought_chunk",
+                {"content": chunk.get("content", "")},
+                config=config,
+            )
+        elif chunk_type == "answer_chunk":
+            await adispatch_custom_event(
+                "answer_chunk",
+                {"content": chunk.get("content", "")},
+                config=config,
+            )
+        elif chunk_type == "complete":
+            output = chunk.get("output")
+            if isinstance(output, AgentOutput):
+                synthesis_output = output
+
+    if synthesis_output:
+        logger.info(
+            f"[GRAPH] Synthesis complete with confidence: "
+            f"{synthesis_output.result.get('confidence', 'unknown')}"
+        )
+        return {
+            "synthesis_result": synthesis_output.result,
+            "agent_timeline": [synthesis_output.to_dict()],
+        }
+
+    logger.warning("[GRAPH] Synthesis completed without output")
     return {
-        "synthesis_result": output.result,
-        "agent_timeline": [output.to_dict()],
+        "synthesis_result": {},
+        "agent_timeline": [],
     }
 
 
 # Node: Critic/Verification
-async def critic_node(state: ResearchState) -> dict:
+async def critic_node(state: ResearchState, config: RunnableConfig) -> dict:
     """
     Verify the synthesized answer against sources.
 
-    Returns updates to state including verification, needs_refinement flag, and timeline entry.
+    Runs inline (not in background) so the feedback loop works.
+    Returns updates to state including verification, needs_refinement flag,
+    and timeline entry.
     """
     logger.info("[GRAPH] Critic node executing...")
 
@@ -184,26 +285,6 @@ async def critic_node(state: ResearchState) -> dict:
         "iteration_count": current_iteration + 1,
         "agent_timeline": [output.to_dict()],
     }
-
-
-# Conditional edge: Should we run web search?
-def should_run_web_search(state: ResearchState) -> str:
-    """
-    Decide whether to run web search based on plan and user preference.
-
-    Returns the next node name: "web_search" or "synthesis"
-    """
-    if not state.get("use_web", True):
-        logger.info("[GRAPH] Web search disabled by user")
-        return "synthesis"
-
-    plan = state.get("execution_plan")
-    if plan and any(step.tool == "web" for step in plan.steps):
-        logger.info("[GRAPH] Plan includes web search")
-        return "web_search"
-
-    logger.info("[GRAPH] No web search needed")
-    return "synthesis"
 
 
 # Conditional edge: Should we refine the answer?

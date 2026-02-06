@@ -1,6 +1,5 @@
 """Orchestrator - Coordinates agent execution for research queries using LangGraph."""
 
-import asyncio
 import logging
 import time
 from uuid import uuid4, UUID
@@ -9,7 +8,6 @@ from dataclasses import dataclass
 from app.agents.graph_builder import compile_research_graph
 from app.agents.graph_state import ResearchState
 from app.core.database import get_supabase_client
-from app.core.config import get_settings
 from app.core.utils import sanitize_for_postgres
 from app.services.agent_memory import get_agent_memory_service
 
@@ -112,19 +110,15 @@ class Orchestrator:
         """
         Execute research with chat context and streaming updates.
 
-        Combines memory-aware research with real-time streaming.
+        Uses LangGraph's astream_events to drive the compiled graph while
+        streaming node status, answer/thought chunks, and sources back to
+        the caller (which wraps them as SSE in chats.py).
         """
-        from app.agents.base import AgentInput, AgentOutput
-        from app.agents.planner import PlannerAgent
-        from app.agents.retrieval import RetrievalAgent
-        from app.agents.web_search import WebSearchAgent
-        from app.agents.synthesis import SynthesisAgent
-        from app.agents.critic import CriticAgent
-
         start_time = time.perf_counter()
         session_id = str(uuid4())
 
-        # Fetch memory
+        # --- Pre-graph setup (memory, doc validation, session row) ---
+
         memory_service = get_agent_memory_service()
         memory_context = await memory_service.build_memory_context(
             user_id=UUID(self.user_id),
@@ -133,16 +127,21 @@ class Orchestrator:
         )
 
         # Enforce Chat-Scoped Document Validation
-        # Override client-provided document_ids with authoritative list from database
         chat_documents = (
             self.supabase.table("documents")
             .select("id")
             .eq("chat_id", str(chat_id))
             .execute()
         )
-        document_ids = [d["id"] for d in chat_documents.data]
+        chat_scoped_document_ids: list[str] = []
+        if chat_documents.data:
+            chat_scoped_document_ids = [
+                str(d.get("id", ""))
+                for d in chat_documents.data
+                if isinstance(d, dict) and d.get("id")
+            ]
         logger.info(
-            f"[ORCH STREAM CONTEXT] Enforcing chat scope: Found {len(document_ids)} documents for chat {chat_id}"
+            f"[ORCH] Enforcing chat scope: {len(chat_scoped_document_ids)} documents for chat {chat_id}"
         )
 
         try:
@@ -157,165 +156,134 @@ class Orchestrator:
                 }
             ).execute()
         except Exception as e:
-            logger.error(f"[ORCH STREAM CONTEXT] Failed to create session: {e}")
+            logger.error(f"[ORCH] Failed to create session: {e}")
             raise
 
-        agent_timeline = []
-        internal_sources = []
-        web_sources = []
-        synthesis_result = None
-        verification = None
+        # Yield message_id early so the frontend can track this message
+        yield {"type": "message_id", "message_id": session_id}
+
+        # --- Build initial state for LangGraph ---
+
+        initial_state: ResearchState = {
+            "query": query,
+            "user_id": self.user_id,
+            "session_id": session_id,
+            "use_web": use_web,
+            "document_ids": chat_scoped_document_ids,
+            "chat_id": str(chat_id),
+            "thread_id": thread_id,
+            "execution_plan": None,
+            "internal_sources": [],
+            "web_sources": [],
+            "image_contexts": [],
+            "synthesis_result": None,
+            "verification": None,
+            "agent_timeline": [],
+            "iteration_count": 0,
+            "needs_refinement": False,
+            "max_iterations": max_iterations,
+            "memory_context": memory_context,
+        }
+
+        # Track outputs collected from graph events
+        agent_timeline: list[dict] = []
+        internal_sources: list[dict] = []
+        web_sources: list[dict] = []
+        synthesis_result: dict | None = None
+        verification: dict | None = None
+
+        known_nodes = {"planning", "retrieval", "web_search", "synthesis", "critic"}
 
         try:
-            # 1. Planning (with memory)
-            yield {"type": "node_complete", "node": "planning", "status": "running"}
-            planner = PlannerAgent()
+            # --- Stream the LangGraph graph ---
 
-            # Format planner memory
-            planner_memory_prompt = memory_service.format_memory_for_prompt(
-                "planner", memory_context.get("planner", [])
-            )
+            config: dict = {"configurable": {"thread_id": thread_id}}
 
-            plan_input = AgentInput(
-                query=query,
-                constraints={
-                    "use_web": use_web,
-                    "memory_prompt": planner_memory_prompt,
-                },
-            )
-            plan_output = await planner.run(plan_input)
-            execution_plan = plan_output.result
-            agent_timeline.append(plan_output.to_dict())
-            yield {"type": "node_complete", "node": "planning", "status": "complete"}
+            async for event in self.graph.astream_events(
+                initial_state,
+                version="v2",
+                config=config,  # type: ignore[arg-type]
+            ):
+                kind = event.get("event")
+                name = event.get("name", "")
 
-            # 2. Retrieval (with memory)
-            yield {"type": "node_complete", "node": "retrieval", "status": "running"}
-            retrieval = RetrievalAgent(self.user_id)
+                # Node lifecycle: started
+                if kind == "on_chain_start" and name in known_nodes:
+                    yield {
+                        "type": "node_complete",
+                        "node": name,
+                        "status": "running",
+                    }
 
-            retrieval_memory_prompt = memory_service.format_memory_for_prompt(
-                "retrieval", memory_context.get("retrieval", [])
-            )
+                # Node lifecycle: completed
+                elif kind == "on_chain_end" and name in known_nodes:
+                    yield {
+                        "type": "node_complete",
+                        "node": name,
+                        "status": "complete",
+                    }
 
-            retrieval_input = AgentInput(
-                query=query,
-                context={
-                    "document_ids": document_ids,
-                    "memory_prompt": retrieval_memory_prompt,
-                },
-                constraints=execution_plan.constraints if execution_plan else {},
-            )
-            retrieval_output = await retrieval.run(retrieval_input)
-            internal_sources = retrieval_output.result
-            agent_timeline.append(retrieval_output.to_dict())
-            yield {"type": "node_complete", "node": "retrieval", "status": "complete"}
-            yield {"type": "sources", "sources": internal_sources}
+                    # Capture output from each node for post-graph usage
+                    output = event.get("data", {}).get("output", {})
+                    if isinstance(output, dict):
+                        if "internal_sources" in output:
+                            internal_sources = output["internal_sources"]
+                        if "web_sources" in output:
+                            web_sources = output["web_sources"]
+                        if "synthesis_result" in output:
+                            synthesis_result = output["synthesis_result"]
+                        if "verification" in output:
+                            verification = output["verification"]
+                        if "agent_timeline" in output:
+                            agent_timeline.extend(output["agent_timeline"])
 
-            # 3. Web Search (conditional)
-            should_web_search = use_web
-            if execution_plan and hasattr(execution_plan, "steps"):
-                should_web_search = use_web and any(
-                    step.tool == "web" for step in execution_plan.steps
-                )
+                # Custom events dispatched by nodes (answer/thought/sources)
+                elif kind == "on_custom_event":
+                    if name == "answer_chunk":
+                        yield {
+                            "type": "answer_chunk",
+                            "content": event["data"].get("content", ""),
+                        }
+                    elif name == "thought_chunk":
+                        yield {
+                            "type": "thought_chunk",
+                            "content": event["data"].get("content", ""),
+                        }
+                    elif name == "sources":
+                        yield {
+                            "type": "sources",
+                            "sources": event["data"].get("sources", []),
+                        }
 
-            if should_web_search:
-                yield {
-                    "type": "node_complete",
-                    "node": "web_search",
-                    "status": "running",
-                }
-                web_search = WebSearchAgent()
-                web_input = AgentInput(
-                    query=query,
-                    constraints=execution_plan.constraints if execution_plan else {},
-                )
-                web_output = await web_search.run(web_input)
-                web_sources = web_output.result
-                agent_timeline.append(web_output.to_dict())
-                yield {
-                    "type": "node_complete",
-                    "node": "web_search",
-                    "status": "complete",
-                }
-                yield {"type": "sources", "sources": web_sources}
-
-            # 4. Synthesis (with memory and streaming)
-            yield {"type": "node_complete", "node": "synthesis", "status": "running"}
-            synthesis = SynthesisAgent()
-
-            synthesis_memory_prompt = memory_service.format_memory_for_prompt(
-                "synthesis", memory_context.get("synthesis", [])
-            )
-
-            synthesis_input = AgentInput(
-                query=query,
-                context={
-                    "internal_sources": internal_sources,
-                    "web_sources": web_sources,
-                    "memory_prompt": synthesis_memory_prompt,
-                },
-                constraints=execution_plan.constraints if execution_plan else {},
-            )
-
-            async for chunk in synthesis.run_stream(synthesis_input):
-                if chunk.get("type") == "thought_chunk":
-                    yield {"type": "thought_chunk", "content": chunk.get("content", "")}
-                elif chunk.get("type") == "answer_chunk":
-                    yield {"type": "answer_chunk", "content": chunk.get("content", "")}
-                elif chunk.get("type") == "complete":
-                    synthesis_output = chunk.get("output")
-                    if isinstance(synthesis_output, AgentOutput):
-                        synthesis_result = synthesis_output.result
-                        agent_timeline.append(synthesis_output.to_dict())
-                    else:
-                        synthesis_result = {}
-
-            yield {"type": "node_complete", "node": "synthesis", "status": "complete"}
+            # --- Post-graph: normalize, persist, yield final events ---
 
             all_sources = self._normalize_sources(internal_sources, web_sources)
             yield {"type": "sources", "sources": all_sources}
 
-            # 5. Skip critic in streaming flow (run in background)
-            # User gets answer immediately with "pending" confidence
-            yield {"type": "node_complete", "node": "critic", "status": "pending"}
-            verification = {
-                "verification_status": "pending",
-                "message": "Verification will complete shortly",
-            }
-
-            # Queue background critic task (non-blocking)
-            logger.info("[ORCH STREAM CONTEXT] Queuing background critic task")
-            asyncio.create_task(
-                self._run_critic_background(
-                    session_id=session_id,
-                    query=query,
-                    synthesis_result=synthesis_result,
-                    internal_sources=internal_sources,
-                    web_sources=web_sources,
-                    chat_id=chat_id,
-                    message_id=session_id,  # message_id == session_id
-                )
-            )
-
             total_latency = int((time.perf_counter() - start_time) * 1000)
 
+            # Determine confidence from real verification result
+            confidence = "unknown"
+            if verification:
+                confidence = verification.get("verification_status", "unknown")
+
             # Store agent memories
-            logger.info("[ORCH STREAM CONTEXT] Storing agent memories...")
+            logger.info("[ORCH] Storing agent memories...")
             try:
                 await self._store_agent_memories(
                     chat_id=chat_id,
                     session_id=session_id,
                     agent_timeline=agent_timeline,
                 )
-                logger.info("[ORCH STREAM CONTEXT] Agent memories stored successfully")
+                logger.info("[ORCH] Agent memories stored successfully")
             except Exception as mem_err:
                 logger.error(
-                    f"[ORCH STREAM CONTEXT] Failed to store memories: {mem_err}",
+                    f"[ORCH] Failed to store memories: {mem_err}",
                     exc_info=True,
                 )
-                # Continue anyway - don't block completion
 
-            # Update session
-            logger.info("[ORCH STREAM CONTEXT] Updating session in database...")
+            # Update research session
+            logger.info("[ORCH] Updating session in database...")
             try:
                 self.supabase.table("research_sessions").update(
                     sanitize_for_postgres(
@@ -329,11 +297,7 @@ class Orchestrator:
                                 ),
                                 "sources": all_sources,
                                 "verification": verification,
-                                "confidence": (
-                                    verification.get("verification_status", "unknown")
-                                    if verification
-                                    else "unknown"
-                                ),
+                                "confidence": confidence,
                                 "total_latency_ms": total_latency,
                                 "query": query,
                                 "session_id": session_id,
@@ -341,10 +305,10 @@ class Orchestrator:
                         }
                     )
                 ).eq("id", session_id).execute()
-                logger.info("[ORCH STREAM CONTEXT] Session updated successfully")
+                logger.info("[ORCH] Session updated successfully")
             except Exception as db_err:
                 logger.error(
-                    f"[ORCH STREAM CONTEXT] Failed to update session: {db_err}",
+                    f"[ORCH] Failed to update session: {db_err}",
                     exc_info=True,
                 )
 
@@ -354,54 +318,48 @@ class Orchestrator:
             from app.services.title_generator import generate_title_from_query
 
             new_title = generate_title_from_query(query)
-            logger.info(
-                f"[ORCH STREAM CONTEXT] Updating chat {chat_id} title to: {new_title}"
-            )
+            logger.info(f"[ORCH] Updating chat {chat_id} title to: {new_title}")
 
             try:
-                self.supabase.table("chats").update(
-                    {
-                        "title": new_title,
-                    }
-                ).eq("id", str(chat_id)).execute()
-                logger.info(f"[ORCH STREAM CONTEXT] Chat title updated successfully")
+                self.supabase.table("chats").update({"title": new_title}).eq(
+                    "id", str(chat_id)
+                ).execute()
+                logger.info("[ORCH] Chat title updated successfully")
 
-                # Emit SSE event for title update
                 yield {
                     "type": "title_updated",
                     "title": new_title,
                     "chat_id": str(chat_id),
                 }
             except Exception as title_err:
-                logger.error(
-                    f"[ORCH STREAM CONTEXT] Failed to update chat title: {title_err}"
-                )
-                # Don't fail the request if title update fails
+                logger.error(f"[ORCH] Failed to update chat title: {title_err}")
 
-            logger.info("[ORCH STREAM CONTEXT] Yielding final complete event")
+            # Yield final complete event with definitive answer
+            answer = ""
+            if synthesis_result:
+                answer = synthesis_result.get("answer", "")
+
+            logger.info("[ORCH] Yielding final complete event")
             yield {
                 "type": "complete",
                 "session_id": session_id,
-                "confidence": (
-                    verification.get("verification_status", "unknown")
-                    if verification
-                    else "unknown"
-                ),
+                "confidence": confidence,
                 "total_latency_ms": total_latency,
                 "sources": all_sources,
                 "verification": verification,
                 "agent_timeline": agent_timeline,
+                "answer": answer,
             }
-            logger.info("[ORCH STREAM CONTEXT] Stream complete!")
+            logger.info("[ORCH] Stream complete!")
 
         except Exception as e:
-            logger.error(f"[ORCH STREAM CONTEXT] Failed: {e}", exc_info=True)
+            logger.error(f"[ORCH] Research failed: {e}", exc_info=True)
             try:
                 self.supabase.table("research_sessions").update(
                     {"status": "failed", "result": {"error": str(e)}}
                 ).eq("id", session_id).execute()
             except Exception as db_err:
-                logger.error(f"[ORCH STREAM CONTEXT] DB update failed: {db_err}")
+                logger.error(f"[ORCH] DB update failed: {db_err}")
             yield {"type": "error", "message": str(e)}
 
     async def _store_agent_memories(
@@ -454,105 +412,3 @@ class Orchestrator:
                 )
             except Exception as e:
                 logger.warning(f"[ORCH] Failed to store memory for {agent_name}: {e}")
-
-    async def _run_critic_background(
-        self,
-        session_id: str,
-        query: str,
-        synthesis_result: dict | None,
-        internal_sources: list,
-        web_sources: list,
-        chat_id: UUID,
-        message_id: str,
-    ):
-        """
-        Run critic verification in background and update message.
-
-        No timeout - will complete eventually or fail with error.
-        This runs after the user receives their answer, so failures
-        are logged but don't block the response.
-        """
-        from app.agents.base import AgentInput
-        from app.agents.critic import CriticAgent
-        from app.core.database import get_supabase_service_client
-
-        logger.info(f"[BACKGROUND CRITIC] Starting for session_id={session_id}")
-
-        # Handle None synthesis_result
-        if synthesis_result is None:
-            logger.warning(
-                f"[BACKGROUND CRITIC] synthesis_result is None for session_id={session_id}, skipping verification"
-            )
-            verification = {
-                "verification_status": "skipped",
-                "message": "No synthesis result available for verification",
-            }
-            confidence = "unknown"
-
-            try:
-                supabase_service = get_supabase_service_client()
-                supabase_service.table("messages").update(
-                    {
-                        "verification": verification,
-                        "confidence": confidence,
-                    }
-                ).eq("id", message_id).execute()
-            except Exception as db_err:
-                logger.error(
-                    f"[BACKGROUND CRITIC] Failed to update message: {db_err}",
-                    exc_info=True,
-                )
-            return
-
-        try:
-            # Run critic with NO timeout - let it complete naturally
-            critic = CriticAgent()
-            critic_input = AgentInput(
-                query=query,
-                context={
-                    "synthesis_result": synthesis_result,
-                    "internal_sources": internal_sources,
-                    "web_sources": web_sources,
-                },
-            )
-
-            # No asyncio.wait_for() - just await directly
-            critic_output = await critic.run(critic_input)
-            verification = critic_output.result
-            confidence = verification.get("verification_status", "verified")
-
-            logger.info(
-                f"[BACKGROUND CRITIC] Complete: confidence={confidence}, "
-                f"session_id={session_id}, latency={critic_output.latency_ms}ms"
-            )
-
-        except Exception as e:
-            # Only real errors, no timeouts
-            logger.error(f"[BACKGROUND CRITIC] Error: {e}", exc_info=True)
-            verification = {
-                "verification_status": "error",
-                "message": f"Verification error: {str(e)}",
-                "error_type": type(e).__name__,
-            }
-            confidence = "error"
-
-        # Update message in database using service role (bypasses RLS)
-        try:
-            supabase_service = get_supabase_service_client()
-
-            supabase_service.table("messages").update(
-                {
-                    "verification": verification,
-                    "confidence": confidence,
-                }
-            ).eq("id", message_id).execute()
-
-            logger.info(
-                f"[BACKGROUND CRITIC] Updated message: message_id={message_id}, "
-                f"confidence={confidence}"
-            )
-
-        except Exception as db_err:
-            logger.error(
-                f"[BACKGROUND CRITIC] Failed to update message: {db_err}", exc_info=True
-            )
