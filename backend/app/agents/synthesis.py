@@ -79,6 +79,16 @@ FORMATTING:
 4. Note any limitations or gaps in the available information
 5. For complex topics, use sections for clarity
 
+MATH/SCIENTIFIC NOTATION (CRITICAL):
+1. Use LaTeX for ALL mathematical expressions, chemical formulas, and scientific notation
+2. ALWAYS use double dollar signs $$...$$ for ALL math (Streamdown does not support single $ to avoid currency conflicts)
+3. Inline math: $$E = mc^2$$ or $$Mg^{2+}$$ (double dollars, inline with text)
+4. Display math: put $$...$$ on its own line for block equations like $$\\sum_{i=1}^n x_i$$
+5. Chemical formulas: $$H_2O$$, $$CO_2$$, $$Ca^{2+}$$, $$SO_4^{2-}$$
+6. Subscripts: $$x_1$$, $$H_2O$$ | Superscripts: $$x^2$$, $$Fe^{3+}$$
+7. Greek letters: $$\\alpha$$, $$\\beta$$, $$\\gamma$$, $$\\Delta$$
+8. WRONG: $Mg^{2+}$ (single dollar) or (Mg²⁺) | CORRECT: $$Mg^{2+}$$
+
 Write a well-formatted markdown response with inline citations. Do NOT wrap in JSON."""
 
 

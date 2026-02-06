@@ -16,22 +16,20 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { listChats, deleteChat, ChatWithPreview } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { useChatContext } from "@/lib/chat-context";
+import { useChatStore } from "@/store/chat-store";
 
 interface ChatsSidebarProps {
     currentChatId: string | null;
-    refreshToken: number;
     onChatSelect: (chatId: string) => void;
     onNewChat: () => void;
 }
 
 export function ChatsSidebar({
     currentChatId,
-    refreshToken,
     onChatSelect,
     onNewChat,
 }: ChatsSidebarProps) {
-    const { chats, setChats } = useChatContext();
+    const { chats, setChats, chatsLoading, setChatsLoading, removeChat } = useChatStore();
     const [isLoading, setIsLoading] = useState(true);
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [confirmOpen, setConfirmOpen] = useState(false);
@@ -39,10 +37,11 @@ export function ChatsSidebar({
 
     useEffect(() => {
         fetchChats();
-    }, [currentChatId, refreshToken]); // Refresh when chat changes or token bumps
+    }, []); // Only fetch on mount, store handles updates
 
     const fetchChats = async () => {
         try {
+            setChatsLoading(true);
             const data = await listChats();
             setChats(data);
         } catch (error) {
@@ -68,7 +67,7 @@ export function ChatsSidebar({
         const chatTitle = pendingDelete.title || "Untitled Chat";
         try {
             await deleteChat(pendingDelete.id);
-            setChats((prev) => prev.filter((c) => c.id !== pendingDelete.id));
+            removeChat(pendingDelete.id);
             if (currentChatId === pendingDelete.id) {
                 onNewChat();
             }

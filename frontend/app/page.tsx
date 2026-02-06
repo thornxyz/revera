@@ -11,48 +11,40 @@ import { DocumentsPanel } from "@/components/documents-panel";
 import { UploadDialog } from "@/components/upload-dialog";
 import { ChatsSidebar } from "@/components/chats-sidebar";
 import { MessageList } from "@/components/message-list";
-import {
-  createChat,
-  getChatMessages,
-  sendChatMessageStream,
-  pollVerificationStatus,
-  Message,
-  Source
-} from "@/lib/api";
+import { getChatMessages } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
-import { useChatContext } from "@/lib/chat-context";
+import { useChatStore } from "@/store/chat-store";
+import { useStreamingChat } from "@/hooks/useStreamingChat";
+import { useUIState } from "@/hooks/useUIState";
 import { ResizableLayout } from "@/components/resizable-layout";
 import { LoginPage } from "@/components/login-page";
-import { AgentProgress, ActivityLogItem } from "@/components/agent-progress";
+import { AgentProgress } from "@/components/agent-progress";
+import { StreamMarkdown } from "@/components/stream-markdown";
 
 export default function ResearchPage() {
   const { user, loading, signOut } = useAuth();
-  const { updateChatTitle } = useChatContext();
+
+  // Local state for query input
   const [query, setQuery] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
 
-  // Chat State
-  const [activeTab, setActiveTab] = useState<"chat" | "documents">("chat");
-  const [currentChatId, setCurrentChatId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
+  // Zustand store for chat state
+  const {
+    currentChatId,
+    messages,
+    messagesLoading,
+    setCurrentChat,
+    setMessages,
+    clearChat,
+    addChat,
+  } = useChatStore();
 
-  const [documentsRefreshToken, setDocumentsRefreshToken] = useState(0);
-  const [chatsRefreshToken, setChatsRefreshToken] = useState(0);
+  // Custom hooks for streaming and UI
+  const streaming = useStreamingChat();
+  const ui = useUIState();
 
-  // Streaming State
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [streamingAnswer, setStreamingAnswer] = useState("");
-  const [streamingThoughts, setStreamingThoughts] = useState("");
-  const [currentAgent, setCurrentAgent] = useState<string | null>(null);
-  const [streamingSources, setStreamingSources] = useState<Source[]>([]);
-  const [activityLog, setActivityLog] = useState<ActivityLogItem[]>([]);
-  const [isReasoningExpanded, setIsReasoningExpanded] = useState(true);
-  const [currentMessageId, setCurrentMessageId] = useState<string | null>(null);
-  const streamStartTimeRef = useRef<Date>(new Date());
-  const activityLogCounterRef = useRef<number>(0);
+  // Refs for auto-scroll
   const streamingEndRef = useRef<HTMLDivElement>(null);
+  const thinkingBoxRef = useRef<HTMLDivElement>(null);
   const userScrolledAwayRef = useRef(false);
 
   // Track if user has scrolled away during streaming
@@ -72,10 +64,17 @@ export default function ResearchPage() {
 
   // Auto-scroll during streaming (only if user hasn't scrolled away)
   useEffect(() => {
-    if (isStreaming && !userScrolledAwayRef.current && streamingEndRef.current) {
+    if (streaming.isStreaming && !userScrolledAwayRef.current && streamingEndRef.current) {
       streamingEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  }, [isStreaming, streamingAnswer, streamingThoughts]);
+  }, [streaming.isStreaming, streaming.streamingAnswer, streaming.streamingThoughts]);
+
+  // Auto-scroll thinking box to bottom when new thoughts arrive
+  useEffect(() => {
+    if (thinkingBoxRef.current && streaming.streamingThoughts) {
+      thinkingBoxRef.current.scrollTop = thinkingBoxRef.current.scrollHeight;
+    }
+  }, [streaming.streamingThoughts]);
 
   // Show loading state
   if (loading) {
@@ -93,153 +92,9 @@ export default function ResearchPage() {
 
   const handleSubmit = async () => {
     if (!query.trim()) return;
-
-    // Auto-create chat if none selected
-    let chatId = currentChatId;
-    if (!chatId) {
-      try {
-        const newChat = await createChat();
-        chatId = newChat.id;
-        setCurrentChatId(chatId);
-        toast.success("New chat created", {
-          description: "Ready to start your research",
-        });
-      } catch (err) {
-        setError("Failed to create chat");
-        toast.error("Failed to create chat", {
-          description: err instanceof Error ? err.message : "Please try again",
-        });
-        return;
-      }
-    }
-
-    setIsLoading(true);
-    setIsStreaming(true);
-    setStreamingAnswer("");
-    setStreamingThoughts("");
-    setCurrentAgent(null);
-    setStreamingSources([]);
-    setActivityLog([]);
-    setIsReasoningExpanded(true);
-    setCurrentMessageId(null);
-    streamStartTimeRef.current = new Date();
-    activityLogCounterRef.current = 0;
-    setError(null);
-
     const currentQuery = query;
     setQuery("");
-
-    try {
-      await sendChatMessageStream(
-        chatId,
-        {
-          query: currentQuery,
-          use_web: true,
-          document_ids: undefined, // Backend enforces chat scoping
-        },
-        {
-          onMessageId: (messageId) => {
-            setCurrentMessageId(messageId);
-          },
-          onAgentStatus: (node, status) => {
-            if (status === "complete") {
-              setCurrentAgent(null);
-              const agentMessages: Record<string, string> = {
-                planning: "Strategy determined",
-                retrieval: "Internal documents searched",
-                web_search: "External sources fetched",
-                synthesis: "Response drafted",
-                critic: "Claims verified",
-              };
-              setActivityLog((prev) => [
-                ...prev,
-                {
-                  id: `${node}-${activityLogCounterRef.current++}`,
-                  timestamp: new Date(),
-                  agent: node,
-                  status: "complete",
-                  message: agentMessages[node] || "Step completed",
-                },
-              ]);
-            } else {
-              setCurrentAgent(node);
-            }
-          },
-          onAnswerChunk: (content) => {
-            setStreamingAnswer((prev) => prev + content);
-          },
-          onThoughtChunk: (content) => {
-            setStreamingThoughts((prev) => prev + content);
-          },
-          onSources: (sources) => {
-            setStreamingSources((prev) => [...prev, ...sources]);
-          },
-          onTitleUpdated: (title, chatId) => {
-            // Update chat title in sidebar using context
-            updateChatTitle(chatId, title);
-          },
-          onComplete: (data) => {
-            // Streaming complete - refresh messages
-            if (chatId) {
-              loadChatMessages(chatId);
-            }
-            setIsStreaming(false);
-            setIsLoading(false);
-            setStreamingAnswer("");
-            setStreamingThoughts("");
-            setStreamingSources([]);
-
-            // Show success notification
-            const duration = ((new Date().getTime() - streamStartTimeRef.current.getTime()) / 1000).toFixed(1);
-            toast.success("Research complete", {
-              description: `Answer generated in ${duration}s with ${data.sources?.length || 0} sources`,
-            });
-
-            // Start polling if confidence is "pending"
-            if (data.confidence === "pending" && data.session_id && chatId) {
-              console.log("[Research] Starting verification polling for message:", data.session_id);
-
-              pollVerificationStatus(
-                chatId,
-                data.session_id,
-                (verification, newConfidence) => {
-                  // Update the message in state
-                  setMessages(prev => prev.map(msg =>
-                    msg.id === data.session_id
-                      ? { ...msg, verification, confidence: newConfidence }
-                      : msg
-                  ));
-
-                  // Show toast notification
-                  toast.success("Verification complete", {
-                    description: `Confidence: ${newConfidence}`,
-                  });
-                }
-              ).catch(err => {
-                console.error("[Research] Verification polling error:", err);
-              });
-            }
-          },
-          onError: (message) => {
-            setError(message);
-            setIsStreaming(false);
-            setIsLoading(false);
-            setCurrentAgent(null);
-            toast.error("Research failed", {
-              description: message,
-            });
-          },
-        }
-      );
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : "Research failed";
-      setError(errorMessage);
-      setIsStreaming(false);
-      setIsLoading(false);
-      toast.error("Research failed", {
-        description: errorMessage,
-      });
-    }
+    await streaming.sendMessage(currentQuery);
   };
 
   const loadChatMessages = async (chatId: string) => {
@@ -248,33 +103,21 @@ export default function ResearchPage() {
       setMessages(chatMessages);
     } catch (err) {
       console.error("Failed to load messages:", err);
-      setError("Failed to load chat messages");
+      streaming.setError("Failed to load chat messages");
     }
   };
 
   const handleChatSelect = async (chatId: string) => {
-    setCurrentChatId(chatId);
-    setError(null);
-    setMessages([]);
-    setIsLoading(true);
-
-    try {
-      await loadChatMessages(chatId);
-    } catch (err) {
-      setError("Failed to load chat");
-    } finally {
-      setIsLoading(false);
-    }
+    setCurrentChat(chatId);
+    streaming.setError(null);
+    await loadChatMessages(chatId);
   };
 
   const handleNewChat = () => {
-    setMessages([]);
+    clearChat();
     setQuery("");
-    setCurrentChatId(null);
-    setError(null);
-    setStreamingAnswer("");
-    setStreamingThoughts("");
-    setActivityLog([]);
+    streaming.resetStreamingState();
+    streaming.setActivityLog([]);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -284,6 +127,8 @@ export default function ResearchPage() {
     }
   };
 
+  const isLoading = streaming.isLoading || messagesLoading;
+
   return (
     <div className="flex h-screen bg-linear-to-br from-slate-50 via-white to-emerald-50 text-slate-900">
       <ResizableLayout
@@ -292,8 +137,8 @@ export default function ResearchPage() {
             {/* Sidebar Tabs */}
             <div className="flex border-b border-slate-200/70 bg-white/80">
               <button
-                onClick={() => setActiveTab("chat")}
-                className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === "chat"
+                onClick={() => ui.setActiveTab("chat")}
+                className={`flex-1 py-3 text-sm font-medium transition-colors ${ui.activeTab === "chat"
                   ? "text-emerald-700 border-b-2 border-emerald-500 bg-emerald-50"
                   : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
                   }`}
@@ -301,8 +146,8 @@ export default function ResearchPage() {
                 Chats
               </button>
               <button
-                onClick={() => setActiveTab("documents")}
-                className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === "documents"
+                onClick={() => ui.setActiveTab("documents")}
+                className={`flex-1 py-3 text-sm font-medium transition-colors ${ui.activeTab === "documents"
                   ? "text-emerald-700 border-b-2 border-emerald-500 bg-emerald-50"
                   : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
                   }`}
@@ -313,10 +158,9 @@ export default function ResearchPage() {
 
             {/* Sidebar Content */}
             <div className="flex-1 overflow-hidden relative">
-              {activeTab === "chat" ? (
+              {ui.activeTab === "chat" ? (
                 <ChatsSidebar
                   currentChatId={currentChatId}
-                  refreshToken={chatsRefreshToken}
                   onChatSelect={handleChatSelect}
                   onNewChat={handleNewChat}
                 />
@@ -324,7 +168,7 @@ export default function ResearchPage() {
                 <div className="h-full flex flex-col">
                   <div className="p-4 border-b border-slate-200/70">
                     <Button
-                      onClick={() => setUploadDialogOpen(true)}
+                      onClick={() => ui.setUploadDialogOpen(true)}
                       className="w-full bg-linear-to-r from-emerald-500 to-teal-500 hover:from-emerald-500 hover:to-teal-400 shadow-sm shadow-emerald-500/20"
                     >
                       <Upload className="h-4 w-4 mr-2" />
@@ -332,10 +176,7 @@ export default function ResearchPage() {
                     </Button>
                   </div>
                   <div className="flex-1 overflow-hidden">
-                    <DocumentsPanel
-                      chatId={currentChatId}
-                      refreshToken={documentsRefreshToken}
-                    />
+                    <DocumentsPanel chatId={currentChatId} />
                   </div>
                 </div>
               )}
@@ -376,14 +217,14 @@ export default function ResearchPage() {
 
           {/* Chat Area */}
           <div className="flex-1 min-h-0 flex flex-col">
-            {error && (
+            {streaming.error && (
               <div className="m-4 p-4 rounded-lg border-rose-200 bg-rose-50/80 backdrop-blur-sm">
-                <p className="text-sm text-rose-600">{error}</p>
+                <p className="text-sm text-rose-600">{streaming.error}</p>
               </div>
             )}
 
             {/* Messages or Welcome Screen */}
-            {!currentChatId && messages.length === 0 && !isStreaming ? (
+            {!currentChatId && messages.length === 0 && !streaming.isStreaming ? (
               <div className="flex-1 flex flex-col items-center justify-center text-center px-4">
                 <div className="relative">
                   <div className="absolute inset-0 bg-linear-to-r from-emerald-400 to-sky-400 blur-3xl opacity-20 rounded-full"></div>
@@ -399,19 +240,19 @@ export default function ResearchPage() {
               </div>
             ) : (
               <div className="flex-1 overflow-y-auto">
-                <MessageList messages={messages} isLoading={isLoading && !isStreaming} />
+                <MessageList messages={messages} isLoading={isLoading && !streaming.isStreaming} />
 
                 {/* Streaming Content */}
-                {isStreaming && (
+                {streaming.isStreaming && (
                   <div className="space-y-6 p-6">
                     {/* Agent Progress */}
-                    <AgentProgress activityLog={activityLog} currentAgent={currentAgent} />
+                    <AgentProgress activityLog={streaming.activityLog} currentAgent={streaming.currentAgent} />
 
                     {/* Reasoning/Thoughts */}
-                    {streamingThoughts && (
+                    {streaming.streamingThoughts && (
                       <div className="bg-slate-50/80 border border-slate-200 backdrop-blur-sm rounded-xl overflow-hidden">
                         <button
-                          onClick={() => setIsReasoningExpanded(!isReasoningExpanded)}
+                          onClick={ui.toggleReasoningExpanded}
                           className="w-full px-4 py-3 bg-slate-100/50 border-b border-slate-200/50 flex items-center justify-between hover:bg-slate-100 transition-colors"
                         >
                           <div className="flex items-center gap-2">
@@ -423,25 +264,26 @@ export default function ResearchPage() {
                               (Chain of Thought)
                             </span>
                           </div>
-                          {isReasoningExpanded ? (
+                          {ui.isReasoningExpanded ? (
                             <ChevronUp className="h-4 w-4 text-slate-400" />
                           ) : (
                             <ChevronDown className="h-4 w-4 text-slate-400" />
                           )}
                         </button>
-                        {isReasoningExpanded && (
-                          <div className="p-4 max-h-60 overflow-y-auto">
-                            <p className="text-xs font-mono text-slate-600 whitespace-pre-wrap leading-relaxed">
-                              {streamingThoughts}
-                              <span className="inline-block w-1.5 h-4 bg-violet-400 animate-pulse ml-0.5 align-middle" />
-                            </p>
+                        {ui.isReasoningExpanded && (
+                          <div ref={thinkingBoxRef} className="p-4 max-h-60 overflow-y-auto reasoning-box">
+                            <StreamMarkdown
+                              content={streaming.streamingThoughts}
+                              isStreaming={true}
+                              className="text-xs text-slate-600 [&_*]:text-xs [&_p]:leading-relaxed [&_code]:text-[10px]"
+                            />
                           </div>
                         )}
                       </div>
                     )}
 
                     {/* Streaming Answer */}
-                    {streamingAnswer && (
+                    {streaming.streamingAnswer && (
                       <Card className="bg-white/90 border-slate-200/80 backdrop-blur-sm shadow-lg">
                         <CardContent className="p-4">
                           <div className="flex items-center gap-2 mb-3">
@@ -455,12 +297,10 @@ export default function ResearchPage() {
                               Streaming...
                             </Badge>
                           </div>
-                          <div className="prose prose-sm max-w-none">
-                            <p className="text-slate-700 whitespace-pre-wrap">
-                              {streamingAnswer}
-                              <span className="inline-block w-2 h-5 bg-emerald-500 animate-pulse ml-0.5 rounded-sm" />
-                            </p>
-                          </div>
+                          <StreamMarkdown
+                            content={streaming.streamingAnswer}
+                            isStreaming={true}
+                          />
                         </CardContent>
                       </Card>
                     )}
@@ -508,17 +348,26 @@ export default function ResearchPage() {
 
         {/* Upload Dialog */}
         <UploadDialog
-          open={uploadDialogOpen}
+          open={ui.uploadDialogOpen}
           chatId={currentChatId}
-          onOpenChange={setUploadDialogOpen}
+          onOpenChange={ui.setUploadDialogOpen}
           onUploadSuccess={() => {
-            setDocumentsRefreshToken((prev) => prev + 1);
+            // Documents panel will auto-refresh via its own state
           }}
           onChatCreated={(newChatId, title) => {
-            // Refresh chat list and set as active
-            setChatsRefreshToken((prev) => prev + 1);
-            setCurrentChatId(newChatId);
-            // Note: Toast will be shown when we implement sonner
+            // Create chat preview and add to store
+            const chatPreview = {
+              id: newChatId,
+              user_id: user.id,
+              title: title || "New Chat",
+              thread_id: "",
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              last_message_preview: null,
+              message_count: 0,
+            };
+            addChat(chatPreview);
+            setCurrentChat(newChatId);
           }}
         />
       </ResizableLayout>

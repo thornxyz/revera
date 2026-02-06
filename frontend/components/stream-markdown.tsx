@@ -1,8 +1,12 @@
 "use client";
 
 import { Streamdown } from "streamdown";
-import type { BundledTheme } from "streamdown";
+import { code } from "@streamdown/code";
+import { math } from "@streamdown/math";
 import { useMemo } from "react";
+
+// Import KaTeX styles for math rendering
+import "katex/dist/katex.min.css";
 
 interface StreamMarkdownProps {
     content: string;
@@ -16,7 +20,8 @@ interface StreamMarkdownProps {
  * 
  * Uses Vercel's streamdown library which handles:
  * - Incomplete markdown during streaming (unclosed tags, etc.)
- * - Syntax highlighting for code blocks
+ * - Syntax highlighting for code blocks via @streamdown/code plugin
+ * - LaTeX math rendering via @streamdown/math plugin (KaTeX)
  * - GFM support (tables, task lists, strikethrough)
  * - Security hardening for untrusted content
  * 
@@ -28,8 +33,6 @@ export function StreamMarkdown({
     className = "",
     onCitationClick
 }: StreamMarkdownProps) {
-    const shikiTheme: [BundledTheme, BundledTheme] = ["github-dark", "github-light"];
-
     // Preprocess content to convert [Source N] to markdown superscript
     // This converts [Source 1] to <sup>[1]</sup> style rendering
     const processedContent = useMemo(() => {
@@ -59,12 +62,38 @@ export function StreamMarkdown({
                 .streamdown-content sup.citation:hover {
                     color: rgb(4 120 87);
                 }
+                /* Code block styling */
+                .streamdown-content pre {
+                    border-radius: 0.5rem;
+                    margin: 1rem 0;
+                }
+                .streamdown-content code {
+                    font-size: 0.85em;
+                }
+                .streamdown-content pre code {
+                    display: block;
+                    overflow-x: auto;
+                    padding: 1rem;
+                }
+                .streamdown-content :not(pre) > code {
+                    background-color: rgb(241 245 249);
+                    padding: 0.2em 0.4em;
+                    border-radius: 0.25rem;
+                    color: rgb(30 41 59);
+                }
+                /* Math styling */
+                .streamdown-content .katex-display {
+                    margin: 1rem 0;
+                    overflow-x: auto;
+                }
             `}</style>
             <Streamdown
-                mode={isStreaming ? "streaming" : "static"}
-                parseIncompleteMarkdown={isStreaming}
+                plugins={{
+                    code: code,
+                    math: math,
+                }}
+                isAnimating={isStreaming}
                 className="leading-relaxed text-slate-700"
-                shikiTheme={shikiTheme}
             >
                 {processedContent}
             </Streamdown>
