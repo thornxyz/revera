@@ -31,7 +31,9 @@ class RetrievalAgent(BaseAgent):
             query=input.query,
             user_id=UUID(self.user_id),
             top_k=top_k,
-            document_ids=[UUID(d) for d in document_ids] if document_ids else None,
+            document_ids=(
+                [UUID(d) for d in document_ids] if document_ids is not None else None
+            ),
             rewrite_query=rewrite_query,
         )
 

@@ -91,7 +91,14 @@ class HybridSearchService:
             )
         ]
 
-        if document_ids:
+        # If document_ids is explicitly provided (even if empty), apply the filter
+        # Empty list means chat has no documents -> return no results
+        if document_ids is not None:
+            if len(document_ids) == 0:
+                logger.info(
+                    "No document_ids provided for chat - returning empty results"
+                )
+                return []
             must_conditions.append(
                 models.FieldCondition(
                     key="document_id",
@@ -233,7 +240,16 @@ Output only the rewritten query, nothing else."""
                 key="user_id", match=models.MatchValue(value=str(user_id))
             )
         ]
-        if document_ids:
+
+        # If document_ids is explicitly provided (even if empty), apply the filter
+        # Empty list means chat has no documents -> return no results
+        if document_ids is not None:
+            if len(document_ids) == 0:
+                # No documents in this chat - return empty results
+                logger.info(
+                    "No document_ids provided for chat - returning empty results"
+                )
+                return []
             must_conditions.append(
                 models.FieldCondition(
                     key="document_id",

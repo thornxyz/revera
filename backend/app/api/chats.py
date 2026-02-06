@@ -30,19 +30,6 @@ class ChatQueryRequest(BaseModel):
     document_ids: list[str] | None = None
 
 
-class ChatQueryResponse(BaseModel):
-    """Response for a chat query."""
-
-    message_id: str
-    session_id: str
-    query: str
-    answer: str
-    sources: list[dict]
-    verification: dict
-    confidence: str
-    total_latency_ms: int
-
-
 # ============================================
 # Chat CRUD Endpoints
 # ============================================
@@ -436,100 +423,6 @@ async def get_message_verification(
 # ============================================
 # Query Endpoints (Research within a chat)
 # ============================================
-
-
-@router.post("/{chat_id}/query", response_model=ChatQueryResponse)
-async def send_chat_query(
-    chat_id: str,
-    request: ChatQueryRequest,
-    user_id: str = Depends(get_current_user_id),
-):
-    """
-    Send a query within a chat context.
-
-    This executes research with:
-    - Short-term memory (previous messages in thread)
-    - Long-term memory (agent execution states from Store)
-    """
-    from app.agents.orchestrator import Orchestrator
-
-    supabase = get_supabase_client()
-
-    # Verify chat ownership
-    chat_response = (
-        supabase.table("chats")
-        .select("*")
-        .eq("id", chat_id)
-        .eq("user_id", user_id)
-        .single()
-        .execute()
-    )
-
-    if not chat_response.data:
-        raise HTTPException(status_code=404, detail="Chat not found")
-
-    chat = chat_response.data
-    thread_id = chat.get("thread_id")
-
-    if not thread_id:
-        # Generate thread_id if missing (for migrated chats)
-
-        thread_id = f"chat-{chat_id}"
-        supabase.table("chats").update({"thread_id": thread_id}).eq(
-            "id", chat_id
-        ).execute()
-
-    # Ensure thread_id is a string for type safety
-    thread_id = str(thread_id)
-
-    try:
-        # Create orchestrator with memory
-        orchestrator = Orchestrator(user_id)
-
-        # Execute research with chat context
-        result = await orchestrator.research_with_context(
-            query=request.query,
-            chat_id=UUID(chat_id),
-            thread_id=thread_id,
-            use_web=request.use_web,
-            document_ids=request.document_ids,
-        )
-
-        # Store message in database
-        message_id = str(
-            UUID(result.session_id)
-        )  # Use session_id as message_id for now
-
-        supabase.table("messages").insert(
-            {
-                "id": message_id,
-                "chat_id": chat_id,
-                "session_id": result.session_id,
-                "query": request.query,
-                "answer": result.answer,
-                "thinking": "",  # Synchronous research doesn't expose thinking yet
-                "agent_timeline": [],  # Synchronous research doesn't expose timeline yet
-                "role": "assistant",
-                "sources": result.sources,
-                "verification": result.verification,
-                "confidence": result.confidence,
-            }
-        ).execute()
-
-        return ChatQueryResponse(
-            message_id=message_id,
-            session_id=result.session_id,
-            query=result.query,
-            answer=result.answer,
-            sources=result.sources,
-            verification=result.verification,
-            confidence=result.confidence,
-            total_latency_ms=result.total_latency_ms,
-        )
-
-    except Exception as e:
-        logger.error(f"[CHAT QUERY] Error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/{chat_id}/query/stream")

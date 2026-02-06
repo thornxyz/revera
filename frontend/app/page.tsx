@@ -6,7 +6,6 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { DocumentsPanel } from "@/components/documents-panel";
 import { UploadDialog } from "@/components/upload-dialog";
@@ -38,7 +37,7 @@ export default function ResearchPage() {
   const [activeTab, setActiveTab] = useState<"chat" | "documents">("chat");
   const [currentChatId, setCurrentChatId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
+
   const [documentsRefreshToken, setDocumentsRefreshToken] = useState(0);
   const [chatsRefreshToken, setChatsRefreshToken] = useState(0);
 
@@ -136,7 +135,7 @@ export default function ResearchPage() {
         {
           query: currentQuery,
           use_web: true,
-          document_ids: selectedDocumentIds.length ? selectedDocumentIds : undefined,
+          document_ids: undefined, // Backend enforces chat scoping
         },
         {
           onMessageId: (messageId) => {
@@ -335,7 +334,6 @@ export default function ResearchPage() {
                   <div className="flex-1 overflow-hidden">
                     <DocumentsPanel
                       chatId={currentChatId}
-                      onDocumentSelect={setSelectedDocumentIds}
                       refreshToken={documentsRefreshToken}
                     />
                   </div>
@@ -503,12 +501,7 @@ export default function ResearchPage() {
                   )}
                 </Button>
               </div>
-              {selectedDocumentIds.length > 0 && (
-                <p className="text-xs text-slate-500 mt-2">
-                  {selectedDocumentIds.length} document
-                  {selectedDocumentIds.length > 1 ? "s" : ""} selected for context
-                </p>
-              )}
+
             </div>
           </div>
         </div>

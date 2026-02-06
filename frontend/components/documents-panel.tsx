@@ -18,25 +18,20 @@ import { listDocuments, deleteDocument, Document } from "@/lib/api";
 
 interface DocumentsPanelProps {
     chatId: string | null;
-    onDocumentSelect?: (documentIds: string[]) => void;
     refreshToken?: number;
 }
 
-export function DocumentsPanel({ chatId, onDocumentSelect, refreshToken }: DocumentsPanelProps) {
+export function DocumentsPanel({ chatId, refreshToken }: DocumentsPanelProps) {
     const [documents, setDocuments] = useState<Document[]>([]);
-    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [isLoading, setIsLoading] = useState(false);
-    const [deletingId, setDeletingId] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [confirmOpen, setConfirmOpen] = useState(false);
     const [pendingDelete, setPendingDelete] = useState<Document | null>(null);
+    const [deletingId, setDeletingId] = useState<string | null>(null);
 
     useEffect(() => {
         if (chatId) {
             fetchDocuments();
-        } else {
-            setDocuments([]);
-            setSelectedIds(new Set());
         }
     }, [refreshToken, chatId]);
 
@@ -60,7 +55,7 @@ export function DocumentsPanel({ chatId, onDocumentSelect, refreshToken }: Docum
     };
 
     const requestDelete = (e: React.MouseEvent, doc: Document) => {
-        e.stopPropagation(); // Don't trigger selection
+        e.stopPropagation();
         setPendingDelete(doc);
         setConfirmOpen(true);
     };
@@ -72,12 +67,6 @@ export function DocumentsPanel({ chatId, onDocumentSelect, refreshToken }: Docum
         try {
             await deleteDocument(pendingDelete.id);
             setDocuments((prev) => prev.filter((d) => d.id !== pendingDelete.id));
-            if (selectedIds.has(pendingDelete.id)) {
-                const newSelected = new Set(selectedIds);
-                newSelected.delete(pendingDelete.id);
-                setSelectedIds(newSelected);
-                onDocumentSelect?.(Array.from(newSelected));
-            }
             toast.success("Document deleted", {
                 description: `${pendingDelete.filename} has been removed`,
             });
@@ -97,17 +86,6 @@ export function DocumentsPanel({ chatId, onDocumentSelect, refreshToken }: Docum
     const closeConfirm = () => {
         setConfirmOpen(false);
         setPendingDelete(null);
-    };
-
-    const toggleSelect = (id: string) => {
-        const newSelected = new Set(selectedIds);
-        if (newSelected.has(id)) {
-            newSelected.delete(id);
-        } else {
-            newSelected.add(id);
-        }
-        setSelectedIds(newSelected);
-        onDocumentSelect?.(Array.from(newSelected));
     };
 
     return (
@@ -136,11 +114,7 @@ export function DocumentsPanel({ chatId, onDocumentSelect, refreshToken }: Docum
                                 documents.map((doc) => (
                                     <Card
                                         key={doc.id}
-                                        className={`group cursor-pointer transition-all ${selectedIds.has(doc.id)
-                                            ? "bg-emerald-50 border-emerald-200"
-                                            : "bg-white/80 border-slate-200 hover:border-slate-300"
-                                            }`}
-                                        onClick={() => toggleSelect(doc.id)}
+                                        className="bg-white/80 border-slate-200"
                                     >
                                         <CardContent className="p-3">
                                             <div className="flex items-start gap-2">
@@ -160,7 +134,7 @@ export function DocumentsPanel({ chatId, onDocumentSelect, refreshToken }: Docum
                                                         {doc.type === "image" ? "Image" : "PDF"} · {new Date(doc.created_at).toLocaleDateString()}
                                                     </p>
                                                 </div>
-                                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <div className="flex items-center gap-1">
                                                     <Button
                                                         variant="ghost"
                                                         size="icon"
@@ -170,9 +144,6 @@ export function DocumentsPanel({ chatId, onDocumentSelect, refreshToken }: Docum
                                                     >
                                                         <Trash2 className="h-4 w-4" />
                                                     </Button>
-                                                    {selectedIds.has(doc.id) && (
-                                                        <span className="text-emerald-600 mr-1">✓</span>
-                                                    )}
                                                 </div>
                                             </div>
                                         </CardContent>
@@ -182,13 +153,12 @@ export function DocumentsPanel({ chatId, onDocumentSelect, refreshToken }: Docum
                         </div>
                     </ScrollArea>
 
-                    {selectedIds.size > 0 && (
-                        <div className="p-4 border-t border-slate-200">
-                            <p className="text-xs text-slate-500">
-                                {selectedIds.size} document{selectedIds.size > 1 ? "s" : ""} selected
-                            </p>
-                        </div>
-                    )}
+                    <div className="p-4 border-t border-slate-200 bg-slate-50/50">
+                        <p className="text-xs text-slate-500 flex items-center gap-1">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                            All workspace documents are active
+                        </p>
+                    </div>
                 </>
             )}
 
@@ -222,3 +192,4 @@ export function DocumentsPanel({ chatId, onDocumentSelect, refreshToken }: Docum
         </div>
     );
 }
+
