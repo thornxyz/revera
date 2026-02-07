@@ -6,123 +6,69 @@ A research system combining **Triple Hybrid RAG** (Dense + Sparse + ColBERT), li
 
 ```mermaid
 flowchart TB
-    subgraph Frontend["Frontend (Next.js + React)"]
-        UI[Chat & Research UI]
-        Timeline[Agent Timeline]
-        DocPanel[Documents Panel]
-        ChatList[Chat Management]
+    subgraph Client["Frontend (Next.js)"]
+        UI["Chat UI"] --> Store["Zustand Store"]
     end
-
-    subgraph API["API Layer (FastAPI)"]
-        ChatsAPI["/api/chats/*<br/>(Stream + CRUD)"]
-        DocumentsAPI["/api/documents/*<br/>(PDF + Images)"]
-        ResearchAPI["/api/research/*<br/>(Timeline)"]
-        HistoryAPI["/api/research/history/*"]
+    
+    subgraph Server["Backend (FastAPI)"]
+        ChatsAPI["/api/chats/*"]
+        DocsAPI["/api/documents/*"]
     end
-
-    subgraph LangGraph["LangGraph Workflow (astream_events)"]
-        Planner["🎯 Planning<br/>(Query Analysis)"]
-        Retrieval["📚 Retrieval<br/>(Hybrid RAG)"]
-        WebSearch["🌐 Web Search<br/>(Tavily · Self-skip)"]
-        Synthesis["✍️ Synthesis<br/>(Streaming · Multimodal)"]
-        Critic["🔍 Critic<br/>(Verify & Rate)"]
-        
-        Planner --> Retrieval
-        Planner --> WebSearch
-        Retrieval --> Synthesis
-        WebSearch --> Synthesis
-        Synthesis --> Critic
-        Critic -->|needs refinement| Synthesis
-        Critic -->|verified| End[END]
+    
+    subgraph Agents["LangGraph Workflow"]
+        direction LR
+        Plan["🎯 Plan"] --> Retrieve["📚 RAG"]
+        Plan --> Web["🌐 Web"]
+        Retrieve --> Synth["✍️ Synthesize"]
+        Web --> Synth
+        Synth --> Critic["🔍 Critic"]
+        Critic -->|refine| Synth
     end
-
-    subgraph Services["Core Services"]
-        Ingestion["Document Ingestion<br/>(PDF → Chunks)"]
-        ImageIngest["Image Ingestion<br/>(Vision → Embeddings)"]
-        HybridRAG["Triple Hybrid Search<br/>(Dense + Sparse + ColBERT)"]
-        TitleGen["Title Generator<br/>(Auto-naming)"]
-        Cleanup["Chat Cleanup<br/>(Cascade Delete)"]
-    end
-
+    
     subgraph External["External APIs"]
-        Gemini["Google Gemini<br/>(Embeddings + LLM + Vision)"]
+        Gemini["Gemini API<br/>(LLM + Vision)"]
         Tavily["Tavily API<br/>(Web Search)"]
     end
-
-    subgraph Local["Local Models"]
-        FastEmbed["FastEmbed<br/>(ColBERT + BM25)"]
-        SpaCy["spaCy<br/>(NLP)"]
+    
+    subgraph Storage["Data Layer"]
+        Qdrant[("Qdrant<br/>Vectors")]
+        Supabase[("Supabase<br/>Auth + DB")]
+        SupaStorage[("Supabase<br/>Storage")]
+        Memory[("Agent<br/>Memory")]
     end
-
-    subgraph Data["Data Layer"]
-        Supabase[(Supabase<br/>Auth & Metadata)]
-        Storage[(Supabase Storage<br/>Images)]
-        Qdrant[(Qdrant<br/>Vector DB)]
-        Memory[(InMemoryStore<br/>Agent Memories)]
-    end
-
-    UI -.->|SSE| ChatsAPI
-    UI --> ChatsAPI
-    DocPanel --> DocumentsAPI
-    ChatList --> ChatsAPI
     
-    ChatsAPI --> Planner
-    ChatsAPI --> TitleGen
-    ChatsAPI --> Cleanup
-    DocumentsAPI --> Ingestion
-    DocumentsAPI --> ImageIngest
+    Client <-.->|SSE Stream| Server
+    Server --> Agents
     
-    Planner --> Gemini
-    Retrieval --> HybridRAG
-    WebSearch --> Tavily
-    Synthesis --> Gemini
-    Critic --> Gemini
-    
-    HybridRAG --> Qdrant
-    HybridRAG --> Gemini
-    HybridRAG --> FastEmbed
-    Ingestion --> Gemini
-    Ingestion --> FastEmbed
-    Ingestion --> Qdrant
-    Ingestion --> Supabase
-    ImageIngest --> Gemini
-    ImageIngest --> FastEmbed
-    ImageIngest --> Storage
-    ImageIngest --> Qdrant
-    ImageIngest --> Supabase
-    Synthesis --> Storage
-    Planner --> Memory
-    Synthesis --> Memory
-    TitleGen --> SpaCy
-    
-    Cleanup --> Supabase
-    Cleanup --> Storage
-    Cleanup --> Qdrant
-    Cleanup --> Memory
-    ResearchAPI --> Supabase
-    HistoryAPI --> Supabase
-    ChatsAPI --> Supabase
+    Agents --> Gemini
+    Web --> Tavily
+    Retrieve --> Qdrant
+    Synth --> SupaStorage
+    Agents --> Memory
+    DocsAPI --> Supabase
 ```
 
 ## Key Features
 
 - **🔍 Triple Hybrid RAG**: Combines Dense (semantic), Sparse (keyword), and ColBERT (late interaction) retrieval with **Reciprocal Rank Fusion (RRF)** for superior accuracy
-- **🧠 Thinking Mode**: Gemini 3's native thinking capability streams reasoning tokens in real-time for transparency
-- **🖼️ Image Context**: Upload images alongside PDFs - Gemini 3 Vision analyzes images for multimodal research answers
+- **🧠 Thinking Mode**: Gemini 3's native thinking capability streams reasoning tokens in real-time — displayed in collapsible UI with execution timeline
+- **🖼️ Image Context**: Upload images alongside PDFs — Gemini 3 Vision analyzes images for multimodal research answers
 - **🤖 Multi-Agent Orchestration**: LangGraph workflow with planning, retrieval, web search, synthesis, and critic agents via `astream_events`
 - **🌐 Live Web Search**: Tavily API with self-skip logic — runs in parallel with retrieval, skips automatically when not needed
 - **♻️ Iterative Refinement**: Critic agent verifies answers and triggers re-synthesis for low-confidence results
 - **⚡ Parallel Fan-Out**: Retrieval + Web Search execute concurrently after planning (~3x speedup)
-- **📊 Real-Time Streaming**: SSE for live agent progress, answer/thought chunks streamed via LangGraph custom events
+- **📊 Real-Time Streaming**: SSE-only architecture for live agent progress, answer/thought chunks streamed via LangGraph custom events
 - **📚 Chat-Scoped Documents**: Upload, index, and search PDFs and images — automatically scoped to the active chat
 - **💬 Chat Management**: Multi-turn conversations with comprehensive cascade cleanup on deletion
 - **🔐 Secure Authentication**: Google OAuth via Supabase with row-level security
+- **⚛️ Modern State Management**: Zustand store with custom hooks (`useStreamingChat`, `useUIState`) for clean, testable code
 
 ## Tech Stack
 
 | Component | Technology |
 |-----------|-----------|
 | **Frontend** | Next.js 16, React 19, TypeScript, Tailwind CSS v4, shadcn/ui |
+| **State Management** | Zustand (chat store), Custom hooks (streaming, UI) |
 | **Backend** | FastAPI, Python 3.12+, asyncio |
 | **Orchestration** | LangGraph (state-based agent workflow) |
 | **Vector Database** | Qdrant (Triple Hybrid: Dense + Sparse + ColBERT) |
