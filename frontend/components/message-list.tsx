@@ -119,9 +119,9 @@ export function MessageList({ messages, isLoading = false, className }: MessageL
                                 </div>
                             )}
 
-                            {/* Confidence Badge */}
+                            {/* Confidence Badge with Score */}
                             {message.confidence && (
-                                <div className="flex items-center gap-2 mt-2">
+                                <div className="flex items-center gap-3 mt-2">
                                     <span className="text-xs text-slate-500">Confidence:</span>
                                     {message.confidence === "pending" ? (
                                         <div className="flex items-center gap-1.5 text-xs text-blue-600">
@@ -137,16 +137,37 @@ export function MessageList({ messages, isLoading = false, className }: MessageL
                                             Verification Error
                                         </span>
                                     ) : (
-                                        <span
-                                            className={cn(
-                                                "text-xs font-medium px-2 py-0.5 rounded-full",
-                                                message.confidence === "high" && "bg-emerald-100 text-emerald-700",
-                                                message.confidence === "medium" && "bg-amber-100 text-amber-700",
-                                                message.confidence === "low" && "bg-rose-100 text-rose-700"
+                                        <div className="flex items-center gap-2">
+                                            <span
+                                                className={cn(
+                                                    "text-xs font-medium px-2 py-0.5 rounded-full",
+                                                    message.confidence === "high" && "bg-emerald-100 text-emerald-700",
+                                                    message.confidence === "medium" && "bg-amber-100 text-amber-700",
+                                                    message.confidence === "low" && "bg-rose-100 text-rose-700"
+                                                )}
+                                            >
+                                                {message.confidence}
+                                            </span>
+                                            {/* Numeric score meter */}
+                                            {message.verification?.confidence_score !== undefined && (
+                                                <div className="flex items-center gap-1.5">
+                                                    <div className="w-16 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                                                        <div
+                                                            className={cn(
+                                                                "h-full rounded-full transition-all",
+                                                                message.verification.confidence_score >= 0.8 && "bg-emerald-500",
+                                                                message.verification.confidence_score >= 0.5 && message.verification.confidence_score < 0.8 && "bg-amber-500",
+                                                                message.verification.confidence_score < 0.5 && "bg-rose-500"
+                                                            )}
+                                                            style={{ width: `${Math.round(message.verification.confidence_score * 100)}%` }}
+                                                        />
+                                                    </div>
+                                                    <span className="text-[10px] text-slate-500">
+                                                        {Math.round(message.verification.confidence_score * 100)}%
+                                                    </span>
+                                                </div>
                                             )}
-                                        >
-                                            {message.confidence}
-                                        </span>
+                                        </div>
                                     )}
                                 </div>
                             )}

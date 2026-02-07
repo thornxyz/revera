@@ -3,7 +3,7 @@
 from typing import Annotated, TypedDict
 from operator import add
 
-from app.agents.planner import ExecutionPlan
+from app.agents.agent_models import ExecutionPlan
 
 
 class ImageContextState(TypedDict):
@@ -43,6 +43,7 @@ class ResearchState(TypedDict):
 
     # Web search outputs
     web_sources: list[dict]
+    tavily_answer: str | None  # Quick AI-generated answer from Tavily
 
     # Image context for multimodal synthesis
     image_contexts: list[ImageContextState]

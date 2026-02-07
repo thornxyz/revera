@@ -10,7 +10,7 @@ from typing import Any
 from langchain_core.callbacks.manager import adispatch_custom_event
 from langchain_core.runnables import RunnableConfig
 
-from app.agents.base import AgentInput, AgentOutput
+from app.agents.base import AgentInput, AgentOutput, ImageContext
 from app.agents.planner import PlannerAgent
 from app.agents.retrieval import RetrievalAgent
 from app.agents.web_search import WebSearchAgent
@@ -85,12 +85,27 @@ async def retrieval_node(state: ResearchState, config: RunnableConfig) -> dict:
 
     constraints = _get_plan_constraints(state)
 
+    # Extract step description from plan for focused retrieval
+    step_description = None
+    plan = state.get("execution_plan")
+    if plan:
+        for step in plan.steps:
+            if step.tool == "rag":
+                step_description = step.description
+                break
+        if step_description:
+            logger.info(f"[GRAPH] Using step description: {step_description[:50]}...")
+
+    context: dict[str, Any] = {
+        "document_ids": state.get("document_ids"),
+        "step_description": step_description,
+    }
+    if memory_prompt:
+        context["memory_prompt"] = memory_prompt
+
     agent_input = AgentInput(
         query=state["query"],
-        context={
-            "document_ids": state.get("document_ids"),
-            "memory_prompt": memory_prompt,
-        },
+        context=context,
         constraints=constraints,
     )
 
@@ -139,17 +154,41 @@ async def web_search_node(state: ResearchState, config: RunnableConfig) -> dict:
 
     # Get constraints from execution plan
     constraints = {}
+    step_description = None
     if plan:
         constraints = plan.constraints
+        # Extract step description for focused search
+        for step in plan.steps:
+            if step.tool == "web":
+                step_description = step.description
+                break
+        if step_description:
+            logger.info(
+                f"[GRAPH] Using web step description: {step_description[:50]}..."
+            )
 
     agent_input = AgentInput(
         query=state["query"],
+        context={"step_description": step_description},
         constraints=constraints,
     )
 
     output = await web_search.run(agent_input)
 
     logger.info(f"[GRAPH] Found {len(output.result)} web sources")
+
+    # Extract Tavily's quick answer if available
+    tavily_answer = output.metadata.get("tavily_answer")
+    if tavily_answer:
+        logger.info(
+            f"[GRAPH] Tavily quick answer available ({len(tavily_answer)} chars)"
+        )
+        # Dispatch quick answer for immediate display before synthesis
+        await adispatch_custom_event(
+            "quick_answer",
+            {"answer": tavily_answer, "source": "tavily"},
+            config=config,
+        )
 
     # Dispatch sources event for real-time streaming
     if output.result:
@@ -161,6 +200,7 @@ async def web_search_node(state: ResearchState, config: RunnableConfig) -> dict:
 
     return {
         "web_sources": output.result,
+        "tavily_answer": tavily_answer,
         "agent_timeline": [output.to_dict()],
     }
 
@@ -173,9 +213,13 @@ async def synthesis_node(state: ResearchState, config: RunnableConfig) -> dict:
     Streams answer and thought chunks via adispatch_custom_event so the
     orchestrator can forward them as SSE events in real time.
 
+    If this is a refinement pass (critic feedback exists), the previous answer
+    and critic feedback are included so synthesis can improve the answer.
+
     Returns updates to state including synthesis_result and timeline entry.
     """
-    logger.info("[GRAPH] Synthesis node executing...")
+    is_refinement = state.get("verification") is not None
+    logger.info(f"[GRAPH] Synthesis node executing... (refinement={is_refinement})")
 
     synthesis = SynthesisAgent()
 
@@ -190,10 +234,86 @@ async def synthesis_node(state: ResearchState, config: RunnableConfig) -> dict:
     if memory_prompt:
         context["memory_prompt"] = memory_prompt
 
+    # If this is a refinement pass, include critic feedback for improvement
+    if is_refinement:
+        verification = state.get("verification", {})
+        previous_answer = state.get("synthesis_result", {}).get("answer", "")
+
+        # Build critic feedback for the prompt
+        critic_feedback_parts = []
+
+        # Add overall assessment
+        if verification.get("overall_assessment"):
+            critic_feedback_parts.append(
+                f"Overall Assessment: {verification['overall_assessment']}"
+            )
+
+        # Add unsupported claims
+        unsupported = verification.get("unsupported_claims", [])
+        if unsupported:
+            claims_text = "\n".join(
+                f"- {claim.get('claim', '')} (Reason: {claim.get('reason', 'unknown')}, "
+                f"Severity: {claim.get('severity', 'unknown')})"
+                for claim in unsupported
+            )
+            critic_feedback_parts.append(f"Unsupported Claims:\n{claims_text}")
+
+        # Add missing citations
+        missing = verification.get("missing_citations", [])
+        if missing:
+            missing_text = "\n".join(
+                f'- "{cite.get("statement", "")}" - Suggestion: {cite.get("suggestion", "add citation")}'
+                for cite in missing
+            )
+            critic_feedback_parts.append(f"Missing Citations:\n{missing_text}")
+
+        # Add coverage gaps
+        gaps = verification.get("coverage_gaps", [])
+        if gaps:
+            gaps_text = "\n".join(f"- {gap}" for gap in gaps)
+            critic_feedback_parts.append(f"Coverage Gaps:\n{gaps_text}")
+
+        # Add conflicting information
+        conflicts = verification.get("conflicting_information", [])
+        if conflicts:
+            conflicts_text = "\n".join(
+                f"- {c.get('topic', 'unknown')}: {c.get('description', '')}"
+                for c in conflicts
+            )
+            critic_feedback_parts.append(f"Conflicting Information:\n{conflicts_text}")
+
+        context["is_refinement"] = True
+        context["previous_answer"] = previous_answer
+        context["critic_feedback"] = "\n\n".join(critic_feedback_parts)
+        context["verification_status"] = verification.get(
+            "verification_status", "unknown"
+        )
+
+        logger.info(
+            f"[GRAPH] Refinement pass with {len(unsupported)} unsupported claims, "
+            f"{len(missing)} missing citations, {len(gaps)} coverage gaps"
+        )
+
+    # Convert image_contexts from state to ImageContext objects
+    image_contexts = state.get("image_contexts", [])
+    images = [
+        ImageContext(
+            document_id=img.get("document_id", ""),
+            filename=img.get("filename", "image"),
+            storage_path=img.get("storage_path", ""),
+            description=img.get("description", ""),
+            mime_type=img.get("mime_type", "image/jpeg"),
+        )
+        for img in image_contexts
+    ]
+    if images:
+        logger.info(f"[GRAPH] Passing {len(images)} images to synthesis")
+
     agent_input = AgentInput(
         query=state["query"],
         context=context,
         constraints=constraints,
+        images=images,
     )
 
     # Stream synthesis — dispatch chunks as custom events
@@ -249,13 +369,20 @@ async def critic_node(state: ResearchState, config: RunnableConfig) -> dict:
 
     critic = CriticAgent()
 
+    # Get memory context for consistency with past verifications
+    memory_prompt = _get_memory_prompt(state, "critic")
+
+    context = {
+        "synthesis_result": state.get("synthesis_result"),
+        "internal_sources": state.get("internal_sources", []),
+        "web_sources": state.get("web_sources", []),
+    }
+    if memory_prompt:
+        context["memory_prompt"] = memory_prompt
+
     agent_input = AgentInput(
         query=state["query"],
-        context={
-            "synthesis_result": state.get("synthesis_result"),
-            "internal_sources": state.get("internal_sources", []),
-            "web_sources": state.get("web_sources", []),
-        },
+        context=context,
     )
 
     output = await critic.run(agent_input)

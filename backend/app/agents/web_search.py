@@ -268,7 +268,7 @@ class WebSearchAgent(BaseAgent):
                         days_old = (datetime.now(pub_date.tzinfo) - pub_date).days
                         if days_old <= 30:
                             relevance += 0.1
-                    except:
+                    except Exception:
                         pass
 
                 # Boost longer, more detailed content
@@ -289,6 +289,12 @@ class WebSearchAgent(BaseAgent):
         """
         Search using Tavily API with advanced features.
 
+        Supports constraints:
+        - max_web_results: Max number of results (default 5)
+        - include_raw_content: Include full page content
+        - freshness: "recent" (7 days), "day" (1 day), "week" (7 days), "month" (30 days)
+        - prefer_internal: If true, reduce web results count
+
         Returns:
             Tuple of (sources list, optional Tavily-generated answer)
         """
@@ -300,19 +306,47 @@ class WebSearchAgent(BaseAgent):
             max_results = constraints.get("max_web_results", 5)
             include_raw = constraints.get("include_raw_content", False)
 
+            # If internal sources are preferred, reduce web results
+            if constraints.get("prefer_internal", False):
+                max_results = min(max_results, 3)
+                logger.info(
+                    f"[{self.name}] Reducing web results due to prefer_internal"
+                )
+
+            # Map freshness constraint to Tavily's days parameter
+            # Tavily supports filtering by publication date
+            freshness = constraints.get("freshness", None)
+            days_filter = None
+            if freshness:
+                freshness_map = {
+                    "day": 1,
+                    "recent": 7,
+                    "week": 7,
+                    "month": 30,
+                }
+                days_filter = freshness_map.get(freshness.lower())
+                if days_filter:
+                    logger.info(
+                        f"[{self.name}] Applying freshness filter: {freshness} ({days_filter} days)"
+                    )
+
+            # Build search kwargs
+            search_kwargs = {
+                "query": query,
+                "search_depth": "advanced",  # "basic" or "advanced"
+                "max_results": max_results,
+                "include_answer": True,  # Get a quick LLM-generated answer
+                "include_raw_content": include_raw,  # Full page content if needed
+                "include_images": False,
+            }
+
+            # Add days filter if freshness specified
+            if days_filter:
+                search_kwargs["days"] = days_filter
+
             # Use advanced search for research queries
             # This does deeper content extraction
-            response = await self.tavily.search(
-                query=query,
-                search_depth="advanced",  # "basic" or "advanced"
-                max_results=max_results,
-                include_answer=True,  # Get a quick LLM-generated answer
-                include_raw_content=include_raw,  # Full page content if needed
-                include_images=False,
-                # Optional: filter by domain
-                # include_domains=["arxiv.org", "github.com"],
-                # exclude_domains=["pinterest.com"],
-            )
+            response = await self.tavily.search(**search_kwargs)
 
             sources = []
             for result in response.get("results", []):

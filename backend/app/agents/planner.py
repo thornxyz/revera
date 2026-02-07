@@ -60,11 +60,24 @@ class PlannerAgent(BaseAgent):
         """Create an execution plan for the query."""
         start_time = time.perf_counter()
 
+        # Get memory context if available
+        memory_prompt = input.constraints.get("memory_prompt", "")
+        memory_section = ""
+        if memory_prompt:
+            memory_section = (
+                "\nPrevious conversation context:\n"
+                f"{memory_prompt}\n\n"
+                "Use this context to:\n"
+                "- Recognize follow-up questions and maintain coherence\n"
+                "- Avoid redundant searches for recently discussed topics\n"
+                "- Adjust the plan based on what's already been retrieved\n"
+            )
+
         # Build the prompt
         prompt = f"""Create an execution plan for this research query:
 
 Query: {input.query}
-
+{memory_section}
 User preferences:
 - Use web search: {input.constraints.get("use_web", True)}
 - Require citations: {input.constraints.get("citations_required", True)}

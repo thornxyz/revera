@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 import json
 import re
@@ -42,7 +42,7 @@ class AgentOutput:
     result: Any
     metadata: dict = field(default_factory=dict)
     latency_ms: int = 0
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def to_dict(self) -> dict:
         """Convert to dictionary for logging."""

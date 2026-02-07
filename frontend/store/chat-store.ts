@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
-import { Message, ChatWithPreview } from '@/lib/api';
+import { Message, ChatWithPreview, Verification } from '@/lib/api';
 
 interface ChatState {
     // Chat list
@@ -19,7 +19,7 @@ interface ChatState {
     setMessages: (messages: Message[]) => void;
     setMessagesLoading: (loading: boolean) => void;
     updateChatTitle: (chatId: string, title: string) => void;
-    updateMessageVerification: (messageId: string, verification: unknown, confidence: string) => void;
+    updateMessageVerification: (messageId: string, verification: Verification, confidence: string) => void;
     addChat: (chat: ChatWithPreview) => void;
     removeChat: (chatId: string) => void;
     clearChat: () => void;

@@ -129,19 +129,48 @@ class Orchestrator:
         # Enforce Chat-Scoped Document Validation
         chat_documents = (
             self.supabase.table("documents")
-            .select("id")
+            .select("id, type, image_url, filename")
             .eq("chat_id", str(chat_id))
             .execute()
         )
         chat_scoped_document_ids: list[str] = []
+        image_contexts: list[dict] = []
+
         if chat_documents.data:
-            chat_scoped_document_ids = [
-                str(d.get("id", ""))
-                for d in chat_documents.data
-                if isinstance(d, dict) and d.get("id")
-            ]
+            for d in chat_documents.data:
+                if not isinstance(d, dict) or not d.get("id"):
+                    continue
+                doc_id = str(d["id"])
+                chat_scoped_document_ids.append(doc_id)
+
+                # Load image contexts for multimodal synthesis
+                if d.get("type") == "image" and d.get("image_url"):
+                    # Get the image description from chunks
+                    chunk_result = (
+                        self.supabase.table("document_chunks")
+                        .select("content")
+                        .eq("document_id", doc_id)
+                        .limit(1)
+                        .execute()
+                    )
+                    description = ""
+                    if chunk_result.data and len(chunk_result.data) > 0:
+                        description = chunk_result.data[0].get("content", "")
+
+                    image_contexts.append(
+                        {
+                            "document_id": doc_id,
+                            "filename": d.get("filename", "image"),
+                            "storage_path": d.get("image_url", ""),
+                            "description": description,
+                            "mime_type": "image/jpeg",  # Default, could be stored in metadata
+                        }
+                    )
+                    logger.info(f"[ORCH] Loaded image context: {d.get('filename')}")
+
         logger.info(
-            f"[ORCH] Enforcing chat scope: {len(chat_scoped_document_ids)} documents for chat {chat_id}"
+            f"[ORCH] Enforcing chat scope: {len(chat_scoped_document_ids)} documents, "
+            f"{len(image_contexts)} images for chat {chat_id}"
         )
 
         try:
@@ -175,7 +204,8 @@ class Orchestrator:
             "execution_plan": None,
             "internal_sources": [],
             "web_sources": [],
-            "image_contexts": [],
+            "image_contexts": image_contexts,
+            "tavily_answer": None,
             "synthesis_result": None,
             "verification": None,
             "agent_timeline": [],
@@ -254,6 +284,12 @@ class Orchestrator:
                             "type": "sources",
                             "sources": event["data"].get("sources", []),
                         }
+                    elif name == "quick_answer":
+                        yield {
+                            "type": "quick_answer",
+                            "answer": event["data"].get("answer", ""),
+                            "source": event["data"].get("source", "tavily"),
+                        }
 
             # --- Post-graph: normalize, persist, yield final events ---
 
@@ -281,6 +317,37 @@ class Orchestrator:
                     f"[ORCH] Failed to store memories: {mem_err}",
                     exc_info=True,
                 )
+
+            # Store semantic memory (learned facts) for future sessions
+            if verification and confidence in ["verified", "high"]:
+                try:
+                    # Track which sources provided verified information
+                    effective_sources = []
+                    for src in all_sources[:5]:  # Top 5 sources
+                        if src.get("title"):
+                            effective_sources.append(
+                                {
+                                    "title": src.get("title", ""),
+                                    "type": src.get("type", "unknown"),
+                                }
+                            )
+
+                    if effective_sources:
+                        await memory_service.store_semantic_memory(
+                            user_id=UUID(self.user_id),
+                            chat_id=chat_id,
+                            key="effective_sources",
+                            facts={
+                                "query_summary": query[:100],
+                                "sources": effective_sources,
+                                "confidence": confidence,
+                            },
+                        )
+                        logger.info(
+                            f"[ORCH] Stored semantic memory: {len(effective_sources)} effective sources"
+                        )
+                except Exception as sem_err:
+                    logger.warning(f"[ORCH] Failed to store semantic memory: {sem_err}")
 
             # Update research session
             logger.info("[ORCH] Updating session in database...")

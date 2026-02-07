@@ -343,7 +343,7 @@ export async function sendChatMessageStream(
 export async function pollVerificationStatus(
     chatId: string,
     messageId: string,
-    onUpdate: (verification: any, confidence: string) => void,
+    onUpdate: (verification: Verification, confidence: string) => void,
     signal?: AbortSignal
 ): Promise<void> {
     let attempt = 0;

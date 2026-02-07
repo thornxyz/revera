@@ -354,8 +354,51 @@ Produce a well-cited answer in JSON format."""
         context_text = "\n\n---\n\n".join(context_parts)
         has_images = len(image_bytes_list) > 0
 
+        # Check if this is a refinement pass
+        is_refinement = input.context.get("is_refinement", False)
+
         # Build the prompt for streaming (markdown output, not JSON)
-        prompt = f"""Answer this research question based on the provided context:
+        if is_refinement:
+            # Refinement prompt includes previous answer and critic feedback
+            previous_answer = input.context.get("previous_answer", "")
+            critic_feedback = input.context.get("critic_feedback", "")
+            verification_status = input.context.get("verification_status", "unknown")
+
+            logger.info(
+                f"[{self.name}] Refinement mode: status={verification_status}, "
+                f"feedback_len={len(critic_feedback)}"
+            )
+
+            prompt = f"""You are refining a research answer based on critic feedback.
+
+Question: {input.query}
+
+## Previous Answer (needs improvement):
+{previous_answer}
+
+## Critic Feedback (verification status: {verification_status}):
+{critic_feedback}
+
+## Available Sources:
+{context_text}
+
+## Your Task:
+1. Review the critic's feedback carefully
+2. Fix ALL unsupported claims by either:
+   - Adding proper citations from the sources
+   - Removing claims not supported by sources
+   - Rewording to accurately reflect what sources say
+3. Address ALL missing citations
+4. Fill any coverage gaps if the sources support it
+5. Resolve conflicting information by acknowledging different perspectives
+
+Response detail guidance: {detail_guidance}
+
+Write an IMPROVED answer that addresses ALL the critic's concerns. 
+Use inline [Source N] citations for every factual claim.
+DO NOT repeat the same unsupported claims."""
+        else:
+            prompt = f"""Answer this research question based on the provided context:
 
 Question: {input.query}
 

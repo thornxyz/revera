@@ -159,6 +159,49 @@ AFTER INSERT ON messages
 FOR EACH ROW
 EXECUTE FUNCTION update_chat_timestamp();
 
+-- Function to get chats with message count and preview (optimized for single query)
+CREATE OR REPLACE FUNCTION get_chats_with_preview(p_user_id UUID)
+RETURNS TABLE (
+    id UUID,
+    user_id UUID,
+    title TEXT,
+    thread_id TEXT,
+    created_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ,
+    message_count BIGINT,
+    last_message_preview TEXT
+) 
+SECURITY DEFINER
+AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        c.id,
+        c.user_id,
+        c.title,
+        c.thread_id,
+        c.created_at,
+        c.updated_at,
+        COUNT(m.id) as message_count,
+        (
+            SELECT 
+                CASE 
+                    WHEN LENGTH(msg.query) > 80 THEN LEFT(msg.query, 80) || '...'
+                    ELSE msg.query
+                END
+            FROM messages msg
+            WHERE msg.chat_id = c.id
+            ORDER BY msg.created_at DESC
+            LIMIT 1
+        ) as last_message_preview
+    FROM chats c
+    LEFT JOIN messages m ON m.chat_id = c.id
+    WHERE c.user_id = p_user_id
+    GROUP BY c.id, c.user_id, c.title, c.thread_id, c.created_at, c.updated_at
+    ORDER BY c.updated_at DESC;
+END;
+$$ LANGUAGE plpgsql;
+
 -- ============================================
 -- COMMENTS
 -- ============================================

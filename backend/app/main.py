@@ -17,6 +17,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
+# Enable verbose logging in debug mode
+if settings.debug:
+    logging.getLogger("app").setLevel(logging.DEBUG)
+    logger.info("[DEBUG] Debug mode enabled - verbose logging active")
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):

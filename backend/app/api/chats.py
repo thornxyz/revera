@@ -44,73 +44,41 @@ async def list_chats(
 
     Returns chats with last message preview and message count,
     sorted by most recently updated.
+
+    Uses optimized PostgreSQL function for single-query performance.
     """
     logger.info(f"[CHATS] Listing chats for user_id={user_id}")
     supabase = get_supabase_client()
 
     try:
-        # Get all chats for user
-        chats_response = (
-            supabase.table("chats")
-            .select("*")
-            .eq("user_id", user_id)
-            .order("updated_at", desc=True)
-            .execute()
-        )
+        # Call optimized PostgreSQL function for single-query fetch
+        response = supabase.rpc(
+            "get_chats_with_preview", {"p_user_id": user_id}
+        ).execute()
 
-        if not chats_response.data:
+        if not response.data:
             logger.info(f"[CHATS] No chats found for user_id={user_id}")
             return []
 
         logger.info(
-            f"[CHATS] Found {len(chats_response.data)} chats for user_id={user_id}"
+            f"[CHATS] Successfully retrieved {len(response.data)} chats with previews (optimized query)"
         )
 
-        result = []
-
-        for chat in chats_response.data:
-            chat_id = chat["id"]
-            logger.debug(f"[CHATS] Processing chat_id={chat_id}")
-
-            # Get message count
-            messages_response = (
-                supabase.table("messages")
-                .select("id", count="exact")
-                .eq("chat_id", chat_id)
-                .execute()
+        # Map database response to Pydantic model
+        result = [
+            ChatWithPreview(
+                id=chat["id"],
+                user_id=chat["user_id"],
+                title=chat.get("title"),
+                thread_id=chat.get("thread_id"),
+                created_at=chat["created_at"],
+                updated_at=chat["updated_at"],
+                last_message_preview=chat.get("last_message_preview"),
+                message_count=chat.get("message_count", 0),
             )
-            message_count = messages_response.count or 0
+            for chat in response.data
+        ]
 
-            # Get last message for preview
-            last_message_response = (
-                supabase.table("messages")
-                .select("query")
-                .eq("chat_id", chat_id)
-                .order("created_at", desc=True)
-                .limit(1)
-                .execute()
-            )
-
-            last_message_preview = None
-            if last_message_response.data:
-                query = last_message_response.data[0]["query"]
-                # Truncate long queries
-                last_message_preview = query[:80] + "..." if len(query) > 80 else query
-
-            result.append(
-                ChatWithPreview(
-                    id=chat_id,
-                    user_id=chat["user_id"],
-                    title=chat.get("title"),
-                    thread_id=chat.get("thread_id"),
-                    created_at=chat["created_at"],
-                    updated_at=chat["updated_at"],
-                    last_message_preview=last_message_preview,
-                    message_count=message_count,
-                )
-            )
-
-        logger.info(f"[CHATS] Successfully retrieved {len(result)} chats with previews")
         return result
 
     except Exception as e:
