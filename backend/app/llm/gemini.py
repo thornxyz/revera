@@ -1,5 +1,6 @@
 """Google Gemini client wrapper for embeddings and LLM inference."""
 
+import asyncio
 import logging
 from google import genai
 from google.genai import types
@@ -8,6 +9,7 @@ from app.core.config import (
     get_settings,
     GEMINI_EMBEDDING_MODEL,
     GEMINI_MODEL,
+    GEMINI_IMAGE_MODEL,
     GEMINI_THINKING_LEVEL,
 )
 
@@ -30,6 +32,7 @@ class GeminiClient:
         self.client = genai.Client(api_key=settings.gemini_api_key)
         self.embedding_model = GEMINI_EMBEDDING_MODEL
         self.model = GEMINI_MODEL
+        self.image_model = GEMINI_IMAGE_MODEL
         self.thinking_level = GEMINI_THINKING_LEVEL
         self.default_timeout = timeout
 
@@ -521,6 +524,63 @@ Be thorough but factual - only describe what you can see."""
 
         except Exception as e:
             logger.error(f"[Gemini] Error in multimodal streaming: {e}", exc_info=True)
+            raise
+
+    # =========================================
+    # Image Generation (Text-to-Image)
+    # =========================================
+
+    async def generate_image(
+        self,
+        prompt: str,
+        number_of_images: int = 1,
+    ) -> list[bytes]:
+        """
+        Generate images from a text prompt.
+
+        Args:
+            prompt: Text description of the image to generate
+            number_of_images: How many images to generate (default 1)
+
+        Returns:
+            List of raw image bytes
+        """
+        try:
+            logger.info(
+                f"[Gemini] Generating {number_of_images} image(s) "
+                f"for prompt: {prompt[:50]}..."
+            )
+
+            # SDK call is synchronous — run in a thread to avoid
+            # blocking the event loop during image generation.
+            response = await asyncio.to_thread(
+                self.client.models.generate_content,
+                model=self.image_model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    candidate_count=number_of_images,
+                ),
+            )
+
+            image_bytes_list: list[bytes] = []
+
+            if not response.candidates:
+                logger.warning("[Gemini] No candidates returned from image generation")
+                return []
+
+            for candidate in response.candidates:
+                if candidate.content and candidate.content.parts:
+                    for part in candidate.content.parts:
+                        if part.inline_data and part.inline_data.data:
+                            image_bytes_list.append(part.inline_data.data)
+
+            logger.info(
+                f"[Gemini] Successfully generated {len(image_bytes_list)} image(s)"
+            )
+            return image_bytes_list
+
+        except Exception as e:
+            logger.error(f"[Gemini] Error generating image: {e}", exc_info=True)
             raise
 
 

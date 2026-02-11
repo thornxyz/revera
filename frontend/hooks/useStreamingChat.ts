@@ -17,6 +17,7 @@ const AGENT_MESSAGES: Record<string, string> = {
     web_search: "External sources fetched",
     synthesis: "Response drafted",
     critic: "Claims verified",
+    image_gen: "Image generated",
 };
 
 export function useStreamingChat() {
@@ -42,6 +43,7 @@ export function useStreamingChat() {
         updateChatTitle,
         updateMessageVerification,
         addChat,
+        isImageMode,
     } = useChatStore();
 
     const resetStreamingState = useCallback(() => {
@@ -96,7 +98,11 @@ export function useStreamingChat() {
         try {
             await sendChatMessageStream(
                 chatId,
-                { query, use_web: options?.useWeb ?? true },
+                {
+                    query,
+                    use_web: options?.useWeb ?? true,
+                    generate_image: isImageMode,
+                },
                 {
                     onAgentStatus: (node, status) => {
                         if (status === "complete") {
@@ -162,7 +168,7 @@ export function useStreamingChat() {
             resetStreamingState();
             toast.error("Research failed", { description: errorMessage });
         }
-    }, [currentChatId, setCurrentChat, setMessages, updateChatTitle, updateMessageVerification, addChat, resetStreamingState]);
+    }, [currentChatId, setCurrentChat, setMessages, updateChatTitle, updateMessageVerification, addChat, resetStreamingState, isImageMode]);
 
     return {
         // State

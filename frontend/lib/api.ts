@@ -149,6 +149,7 @@ export interface ChatQueryRequest {
     query: string;
     use_web?: boolean;
     document_ids?: string[];
+    generate_image?: boolean;
 }
 
 export interface ChatQueryResponse {

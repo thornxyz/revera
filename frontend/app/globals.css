@@ -115,10 +115,29 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
+@layer utilities {
+  .glass-morphism {
+    @apply backdrop-blur-xl bg-white/70 border border-white/20 shadow-xl;
+  }
+
+  .premium-shadow {
+    box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.05), 0 8px 10px -6px rgb(0 0 0 / 0.05);
+  }
+
+  .emerald-glow {
+    box-shadow: 0 0 20px -5px rgba(16, 185, 129, 0.3);
+  }
+
+  .input-pill-container {
+    @apply relative flex items-center gap-2 p-1.5 rounded-2xl transition-all duration-500;
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
+
   body {
     @apply bg-background text-foreground;
   }

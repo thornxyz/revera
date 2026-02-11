@@ -205,6 +205,45 @@ class ImageIngestionService:
             self.supabase.table("documents").delete().eq("id", document_id).execute()
             raise
 
+    async def save_generated_image(
+        self,
+        image_bytes: bytes,
+        user_id: UUID,
+        prompt: str,
+    ) -> str:
+        """
+        Store a generated image in Supabase Storage and return the path.
+
+        Args:
+            image_bytes: Raw bytes of the generated image
+            user_id: ID of the user who generated it
+            prompt: The prompt used to generate it (for filename)
+
+        Returns:
+            Storage path (e.g. users/{user_id}/images/{uuid}.png)
+        """
+        # Clean prompt for filename
+        clean_prompt = "".join(
+            c for c in prompt[:30] if c.isalnum() or c in (" ", "-", "_")
+        ).strip()
+        clean_prompt = clean_prompt.replace(" ", "_")
+        if not clean_prompt:
+            clean_prompt = "generated"
+
+        unique_filename = f"{uuid.uuid4()}_{clean_prompt}.png"
+        storage_path = f"users/{user_id}/images/{unique_filename}"
+
+        try:
+            self.supabase.storage.from_(self.storage_bucket).upload(
+                path=storage_path,
+                file=image_bytes,
+                file_options={"content-type": "image/png"},
+            )
+            return storage_path
+        except Exception as e:
+            logger.error(f"[IMAGE_INGEST] Storage upload failed: {e}")
+            raise
+
     async def _store_image(
         self,
         file_content: bytes,

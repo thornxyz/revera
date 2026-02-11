@@ -1,8 +1,17 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Upload, Sparkles, Loader2, Brain, ChevronDown, ChevronUp, Send } from "lucide-react";
-import { toast } from "sonner";
+import {
+  Send,
+  Loader2,
+  Sparkles,
+  ImagePlus,
+  Upload,
+  Brain,
+  ChevronDown,
+  ChevronUp
+} from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
@@ -36,6 +45,8 @@ export default function ResearchPage() {
     setMessages,
     clearChat,
     addChat,
+    isImageMode,
+    setIsImageMode,
   } = useChatStore();
 
   // Custom hooks for streaming and UI
@@ -46,10 +57,11 @@ export default function ResearchPage() {
   const streamingEndRef = useRef<HTMLDivElement>(null);
   const thinkingBoxRef = useRef<HTMLDivElement>(null);
   const userScrolledAwayRef = useRef(false);
+  const chatAreaRef = useRef<HTMLDivElement>(null);
 
   // Track if user has scrolled away during streaming
   useEffect(() => {
-    const chatArea = document.querySelector('.flex-1.overflow-y-auto');
+    const chatArea = chatAreaRef.current;
     if (!chatArea) return;
 
     const handleScroll = () => {
@@ -76,6 +88,17 @@ export default function ResearchPage() {
     }
   }, [streaming.streamingThoughts]);
 
+  // Scroll to bottom when switching chats or loading new messages
+  useEffect(() => {
+    const chatArea = chatAreaRef.current;
+    if (chatArea) {
+      // Use requestAnimationFrame to wait for DOM to render the messages
+      requestAnimationFrame(() => {
+        chatArea.scrollTop = chatArea.scrollHeight;
+      });
+    }
+  }, [currentChatId, messages]);
+
   // Show loading state
   if (loading) {
     return (
@@ -94,6 +117,8 @@ export default function ResearchPage() {
     if (!query.trim()) return;
     const currentQuery = query;
     setQuery("");
+    // Reset image mode after sending so the next message defaults to research
+    if (isImageMode) setIsImageMode(false);
     await streaming.sendMessage(currentQuery);
   };
 
@@ -185,7 +210,7 @@ export default function ResearchPage() {
         }
       >
         {/* Main Content */}
-        <div className="flex-1 flex flex-col h-full min-h-0 bg-linear-to-br from-white via-slate-50 to-emerald-50">
+        <div className="flex-1 flex flex-col h-full min-h-0 bg-linear-to-br from-white via-slate-50 to-emerald-50 relative">
           {/* Header */}
           <header className="border-b border-slate-200/70 px-4 sm:px-6 py-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between backdrop-blur-sm bg-white/70">
             <div>
@@ -239,7 +264,7 @@ export default function ResearchPage() {
                 </p>
               </div>
             ) : (
-              <div className="flex-1 overflow-y-auto">
+              <div ref={chatAreaRef} className="flex-1 overflow-y-auto">
                 <MessageList messages={messages} isLoading={isLoading && !streaming.isStreaming} />
 
                 {/* Streaming Content */}
@@ -275,7 +300,7 @@ export default function ResearchPage() {
                             <StreamMarkdown
                               content={streaming.streamingThoughts}
                               isStreaming={true}
-                              className="text-xs text-slate-600 [&_*]:text-xs [&_p]:leading-relaxed [&_code]:text-[10px]"
+                              className="text-xs text-slate-600 **:text-xs [&_p]:leading-relaxed [&_code]:text-[10px]"
                             />
                           </div>
                         )}
@@ -314,34 +339,79 @@ export default function ResearchPage() {
           </div>
 
           {/* Input Area */}
-          <div className="border-t border-slate-200/70 p-4 sm:p-5 backdrop-blur-sm bg-white/80">
-            <div className="max-w-5xl mx-auto">
-              <div className="flex gap-3">
-                <Textarea
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder={
-                    currentChatId
-                      ? "Continue the conversation..."
-                      : "Ask a research question to start a new chat..."
-                  }
-                  className="min-h-17.5 max-h-35 bg-white border-slate-200/70 resize-none text-base focus:border-emerald-400/70 focus:ring-emerald-200 transition-colors"
-                  disabled={isLoading}
-                />
-                <Button
-                  onClick={handleSubmit}
-                  disabled={isLoading || !query.trim()}
-                  className="bg-linear-to-r from-emerald-500 to-teal-500 hover:from-emerald-500 hover:to-teal-400 px-6 shadow-sm shadow-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isLoading ? (
-                    <Loader2 className="h-5 w-5 animate-spin" />
-                  ) : (
-                    <Send className="h-5 w-5" />
-                  )}
-                </Button>
-              </div>
+          <div className="p-4 sm:p-8 pb-10 sm:pb-12 bg-transparent pointer-events-none absolute bottom-0 left-0 right-0 z-10">
+            <div className="max-w-4xl mx-auto w-full pointer-events-auto">
+              <div
+                className={cn(
+                  "input-pill-container transition-all duration-500",
+                  "glass-morphism bg-white/70 ring-1 ring-slate-200/50",
+                  isImageMode ? "emerald-glow ring-emerald-400/30" : "premium-shadow"
+                )}
+              >
+                <div className="flex items-center gap-1 pl-2">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setIsImageMode(!isImageMode)}
+                    className={cn(
+                      "h-10 w-10 rounded-xl transition-all duration-300",
+                      isImageMode
+                        ? "bg-emerald-100/80 text-emerald-600"
+                        : "text-slate-400 hover:text-slate-600 hover:bg-slate-100/50"
+                    )}
+                    title={isImageMode ? "Image Mode Active" : "Enable Image Generation"}
+                  >
+                    <ImagePlus className={cn("h-5 w-5", isImageMode && "animate-pulse")} />
+                  </Button>
 
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => ui.setUploadDialogOpen(true)}
+                    className="h-10 w-10 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100/50 transition-all duration-300"
+                    title="Upload Documents"
+                  >
+                    <Upload className="h-5 w-5" />
+                  </Button>
+                </div>
+
+                <div className="flex-1 relative">
+                  <Textarea
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder={
+                      isImageMode
+                        ? "Describe the image you want to generate..."
+                        : currentChatId
+                          ? "Continue the conversation..."
+                          : "Ask a research question..."
+                    }
+                    className="h-11 min-h-11 max-h-35 bg-transparent border-0 ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 px-2 py-3 text-sm resize-none"
+                    disabled={isLoading}
+                  />
+                </div>
+
+                <div className="pr-1.5 flex items-center">
+                  <Button
+                    size="icon"
+                    onClick={handleSubmit}
+                    disabled={isLoading || !query.trim()}
+                    className={cn(
+                      "h-9 w-9 rounded-xl transition-all duration-300 shadow-sm",
+                      isImageMode
+                        ? "bg-emerald-500 hover:bg-emerald-600 text-white"
+                        : "bg-slate-900 hover:bg-slate-800 text-white"
+                    )}
+                  >
+                    {isLoading ? (
+                      <Loader2 className="h-4.5 w-4.5 animate-spin" />
+                    ) : (
+                      <Send className="h-4.5 w-4.5" />
+                    )}
+                  </Button>
+                </div>
+              </div>
             </div>
           </div>
         </div>

@@ -23,6 +23,9 @@ interface ChatState {
     addChat: (chat: ChatWithPreview) => void;
     removeChat: (chatId: string) => void;
     clearChat: () => void;
+    // Image mode
+    isImageMode: boolean;
+    setIsImageMode: (value: boolean) => void;
 }
 
 export const useChatStore = create<ChatState>()(
@@ -64,6 +67,9 @@ export const useChatStore = create<ChatState>()(
                 messages: state.currentChatId === chatId ? [] : state.messages,
             })),
             clearChat: () => set({ currentChatId: null, messages: [] }),
+            // Image mode
+            isImageMode: false,
+            setIsImageMode: (isImageMode) => set({ isImageMode }),
         }),
         { name: 'chat-store' }
     )

@@ -15,7 +15,7 @@ flowchart TB
         DocsAPI["/api/documents/*"]
     end
     
-    subgraph Agents["LangGraph Workflow"]
+    subgraph ResearchFlow["LangGraph Research Workflow"]
         direction LR
         Plan["🎯 Plan"] --> Retrieve["📚 RAG"]
         Plan --> Web["🌐 Web"]
@@ -25,8 +25,13 @@ flowchart TB
         Critic -->|refine| Synth
     end
     
+    subgraph ImageFlow["Image Generation Flow"]
+        direction LR
+        GenImg["🎨 Generate"]
+    end
+    
     subgraph External["External APIs"]
-        Gemini["Gemini API<br/>(LLM + Vision)"]
+        Gemini["Gemini API<br/>(LLM + Vision + Image Gen)"]
         Tavily["Tavily API<br/>(Web Search)"]
     end
     
@@ -38,13 +43,16 @@ flowchart TB
     end
     
     Client <-.->|SSE Stream| Server
-    Server --> Agents
+    Server -->|generate_image=false| ResearchFlow
+    Server -->|generate_image=true| ImageFlow
     
-    Agents --> Gemini
+    ResearchFlow --> Gemini
+    ImageFlow --> Gemini
     Web --> Tavily
     Retrieve --> Qdrant
     Synth --> SupaStorage
-    Agents --> Memory
+    GenImg --> SupaStorage
+    ResearchFlow --> Memory
     DocsAPI --> Supabase
 ```
 
@@ -53,6 +61,7 @@ flowchart TB
 - **🔍 Triple Hybrid RAG**: Combines Dense (semantic), Sparse (keyword), and ColBERT (late interaction) retrieval with **Reciprocal Rank Fusion (RRF)** for superior accuracy
 - **🧠 Thinking Mode**: Gemini 3's native thinking capability streams reasoning tokens in real-time — displayed in collapsible UI with execution timeline
 - **🖼️ Image Context**: Upload images alongside PDFs — Gemini 3 Vision analyzes images for multimodal research answers
+- **🎨 Image Generation**: Generate images from text prompts using Gemini's image model — automatically stored in Supabase Storage with signed URLs
 - **🤖 Multi-Agent Orchestration**: LangGraph workflow with planning, retrieval, web search, synthesis, and critic agents via `astream_events`
 - **🌐 Live Web Search**: Tavily API with self-skip logic — runs in parallel with retrieval, skips automatically when not needed
 - **♻️ Iterative Refinement**: Critic agent verifies answers and triggers re-synthesis for low-confidence results
@@ -75,8 +84,10 @@ flowchart TB
 | **Agent Memory** | LangGraph InMemoryStore (episodic/semantic memory) |
 | **Embeddings** | Gemini 3 (3072d dense), FastEmbed (BM25, ColBERT) |
 | **LLM** | Gemini 3 Flash Preview (with native thinking mode) |
+| **Image Generation** | Gemini 2.5 Flash Image (text-to-image synthesis) |
 | **Web Search** | Tavily API |
 | **Auth & Metadata** | Supabase (PostgreSQL, JWT) |
+| **Storage** | Supabase Storage (PDFs, images, generated images) |
 | **UI Components** | shadcn/ui, Radix UI, lucide-react icons |
 
 ### Backend Setup
@@ -184,5 +195,33 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 | GET | `/api/chats/{id}/memory` | Get agent memory context |
 | GET | `/api/chats/{id}/memory/{agent}` | Get memory for specific agent |
 
+## Request Payload Structure
 
+### Chat Query Request
+
+**Endpoint:** `POST /api/chats/{chat_id}/query/stream`
+
+```json
+{
+  "query": "Your research question or image generation prompt",
+  "use_web": true,
+  "document_ids": ["id1", "id2"],
+  "generate_image": false
+}
+```
+
+**Parameters:**
+- `query` (string, required): The research question or image generation prompt (max 2000 characters)
+- `use_web` (boolean, optional): Enable/disable live web search for research queries (default: `true`)
+- `document_ids` (array of strings, optional): Restrict search to specific uploaded documents; if omitted, all chat documents are used
+- `generate_image` (boolean, optional): When `true`, generates an image from the query prompt instead of running research (default: `false`)
+
+**Streaming Event Types (SSE):**
+- `agent_status`: Agent node completion (planning, retrieval, web_search, synthesis, critic, image_gen)
+- `answer_chunk`: Streamed answer or generated image markdown
+- `thought_chunk`: Streamed thinking/reasoning text (for research mode)
+- `sources`: Source list when available
+- `title_updated`: Auto-generated chat title
+- `complete`: Final payload with session metadata + agent timeline
+- `error`: Error payload
 
