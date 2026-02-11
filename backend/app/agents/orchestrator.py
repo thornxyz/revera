@@ -6,7 +6,7 @@ from uuid import uuid4, UUID
 from dataclasses import dataclass
 
 from app.agents.graph_builder import compile_research_graph
-from app.agents.graph_state import ResearchState
+from app.agents.graph_state import ImageContextState, ResearchState
 from app.core.database import get_supabase_client
 from app.core.utils import sanitize_for_postgres
 from app.services.agent_memory import get_agent_memory_service
@@ -134,7 +134,7 @@ class Orchestrator:
             .execute()
         )
         chat_scoped_document_ids: list[str] = []
-        image_contexts: list[dict] = []
+        image_contexts: list[ImageContextState] = []
 
         if chat_documents.data:
             for d in chat_documents.data:
@@ -155,16 +155,20 @@ class Orchestrator:
                     )
                     description = ""
                     if chunk_result.data and len(chunk_result.data) > 0:
-                        description = chunk_result.data[0].get("content", "")
+                        first_chunk = chunk_result.data[0]
+                        if isinstance(first_chunk, dict):
+                            description = first_chunk.get("content", "")
 
+                    filename = str(d.get("filename") or "image")
+                    storage_path = str(d.get("image_url") or "")
                     image_contexts.append(
                         {
                             "document_id": doc_id,
-                            "filename": d.get("filename", "image"),
-                            "storage_path": d.get("image_url", ""),
-                            "description": description,
-                            "mime_type": "image/jpeg",  # Default, could be stored in metadata
-                        }
+                            "filename": filename,
+                            "storage_path": storage_path,
+                            "description": str(description or ""),
+                            "mime_type": "image/jpeg",
+                        },
                     )
                     logger.info(f"[ORCH] Loaded image context: {d.get('filename')}")
 
@@ -384,10 +388,10 @@ class Orchestrator:
             # Update chat title based on query
             from app.services.title_generator import generate_title_from_query
 
-            new_title = generate_title_from_query(query)
-            logger.info(f"[ORCH] Updating chat {chat_id} title to: {new_title}")
-
             try:
+                new_title = generate_title_from_query(query)
+                logger.info(f"[ORCH] Updating chat {chat_id} title to: {new_title}")
+
                 self.supabase.table("chats").update({"title": new_title}).eq(
                     "id", str(chat_id)
                 ).execute()

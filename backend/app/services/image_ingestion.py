@@ -287,6 +287,19 @@ class ImageIngestionService:
             logger.error(f"[IMAGE_INGEST] Failed to create signed URL: {e}")
             return ""
 
+    def get_public_image_url(self, storage_path: str) -> str:
+        """Get a public URL for an image in storage."""
+        try:
+            result = self.supabase.storage.from_(self.storage_bucket).get_public_url(
+                storage_path
+            )
+            if isinstance(result, dict):
+                return result.get("publicURL", "")
+            return str(result or "")
+        except Exception as e:
+            logger.error(f"[IMAGE_INGEST] Failed to get public URL: {e}")
+            return ""
+
     async def get_image_bytes(self, storage_path: str) -> bytes | None:
         """Download image bytes from storage for multimodal synthesis."""
         try:

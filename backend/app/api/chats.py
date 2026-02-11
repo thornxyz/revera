@@ -451,8 +451,10 @@ async def _image_generation_stream(
             prompt=query,
         )
 
-        # 3. Get signed URL for frontend
-        signed_url = image_ingestion.get_image_url(storage_path)
+        # 3. Build public URL
+        public_url = image_ingestion.get_public_image_url(storage_path)
+        if not public_url:
+            raise ValueError("Failed to create public image URL")
 
         # 4. Save message to DB (user query + assistant answer)
         message_id = str(uuid.uuid4())
@@ -460,15 +462,16 @@ async def _image_generation_stream(
             "id": message_id,
             "chat_id": chat_id,
             "query": query,
-            "answer": f"![Generated Image]({signed_url})",
+            "answer": f"![Generated Image]({public_url})",
             "role": "assistant",
             "confidence": "high",
             "sources": [
                 {
                     "type": "image",
-                    "url": signed_url,
+                    "url": public_url,
                     "title": "Generated Image",
                     "content": f"Image generated for prompt: {query}",
+                    "storage_path": storage_path,
                 }
             ],
         }
@@ -482,7 +485,7 @@ async def _image_generation_stream(
         )
         yield (
             f"event: answer_chunk\n"
-            f"data: {json.dumps({'content': f'![Generated Image]({signed_url})'})}\n\n"
+            f"data: {json.dumps({'content': f'![Generated Image]({public_url})'})}\n\n"
         )
 
         complete_data = {

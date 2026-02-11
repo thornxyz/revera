@@ -109,7 +109,7 @@ export function DocumentsPanel({ chatId, refreshToken }: DocumentsPanelProps) {
                             {isLoading ? (
                                 <p className="text-sm text-slate-500">Loading...</p>
                             ) : documents.length === 0 ? (
-                                <p className="text-sm text-slate-500">No documents uploaded</p>
+                                <p className="text-sm text-slate-500">No documents uploaded in this chat</p>
                             ) : (
                                 documents.map((doc) => (
                                     <Card
@@ -125,7 +125,7 @@ export function DocumentsPanel({ chatId, refreshToken }: DocumentsPanelProps) {
                                                 )}
                                                 <div className="flex-1 min-w-0">
                                                     <p
-                                                        className="text-sm font-medium leading-snug whitespace-normal break-words"
+                                                        className="text-sm font-medium leading-snug whitespace-normal wrap-break-word"
                                                         title={doc.filename}
                                                     >
                                                         {doc.filename}

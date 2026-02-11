@@ -28,12 +28,6 @@ async def lifespan(_: FastAPI):
     """Initialize services on application startup."""
     logger.info("[STARTUP] Initializing Revera services...")
 
-    # Pre-load title generator (spaCy model initialization)
-    from app.services.title_generator import _get_title_generator
-
-    _get_title_generator()
-    logger.info("[STARTUP] ✓ spaCy title generator ready")
-
     logger.info("[STARTUP] Revera services initialized successfully")
     yield
 

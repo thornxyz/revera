@@ -269,7 +269,7 @@ export default function ResearchPage() {
 
                 {/* Streaming Content */}
                 {streaming.isStreaming && (
-                  <div className="space-y-6 p-6">
+                  <div className="space-y-6 p-6 pb-32">
                     {/* Agent Progress */}
                     <AgentProgress activityLog={streaming.activityLog} currentAgent={streaming.currentAgent} />
 
