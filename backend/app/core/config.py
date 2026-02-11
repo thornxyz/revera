@@ -2,6 +2,7 @@ from pathlib import Path
 from functools import lru_cache
 
 import json
+from urllib.parse import urlparse
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -63,12 +64,26 @@ class Settings(BaseSettings):
             try:
                 parsed = json.loads(trimmed)
                 if isinstance(parsed, list):
-                    return [
+                    origins = [
                         str(origin).strip() for origin in parsed if str(origin).strip()
                     ]
+                    return self._normalize_origins(origins)
             except json.JSONDecodeError:
                 pass
-        return [origin.strip() for origin in trimmed.split(",") if origin.strip()]
+        origins = [origin.strip() for origin in trimmed.split(",") if origin.strip()]
+        return self._normalize_origins(origins)
+
+    @staticmethod
+    def _normalize_origins(origins: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for origin in origins:
+            parsed = urlparse(origin)
+            if parsed.scheme and parsed.netloc:
+                origin = f"{parsed.scheme}://{parsed.netloc}"
+            origin = origin.rstrip("/")
+            if origin and origin not in normalized:
+                normalized.append(origin)
+        return normalized
 
 
 @lru_cache
