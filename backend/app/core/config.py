@@ -1,6 +1,7 @@
 from pathlib import Path
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -49,6 +50,16 @@ class Settings(BaseSettings):
         env_file=Path(__file__).parent.parent.parent / ".env",
         env_file_encoding="utf-8",
     )
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, value: str | list[str]) -> list[str]:
+        if isinstance(value, str):
+            trimmed = value.strip()
+            if trimmed == "*":
+                return ["*"]
+            return [origin.strip() for origin in trimmed.split(",") if origin.strip()]
+        return value
 
 
 @lru_cache
