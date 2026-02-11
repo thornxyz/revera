@@ -1,7 +1,8 @@
 from pathlib import Path
 from functools import lru_cache
 
-from pydantic import field_validator
+import json
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -38,7 +39,7 @@ class Settings(BaseSettings):
     qdrant_upsert_batch_size: int = 50
 
     # Server Configuration
-    cors_origins: list[str] = ["http://localhost:3000"]
+    cors_origins: str = "http://localhost:3000"
     critic_timeout_seconds: int = 30
     log_format: str = "text"  # "text" or "json"
 
@@ -51,15 +52,23 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
     )
 
-    @field_validator("cors_origins", mode="before")
-    @classmethod
-    def parse_cors_origins(cls, value: str | list[str]) -> list[str]:
-        if isinstance(value, str):
-            trimmed = value.strip()
-            if trimmed == "*":
-                return ["*"]
-            return [origin.strip() for origin in trimmed.split(",") if origin.strip()]
-        return value
+    @property
+    def cors_origins_list(self) -> list[str]:
+        trimmed = self.cors_origins.strip()
+        if not trimmed:
+            return []
+        if trimmed == "*":
+            return ["*"]
+        if trimmed.startswith("["):
+            try:
+                parsed = json.loads(trimmed)
+                if isinstance(parsed, list):
+                    return [
+                        str(origin).strip() for origin in parsed if str(origin).strip()
+                    ]
+            except json.JSONDecodeError:
+                pass
+        return [origin.strip() for origin in trimmed.split(",") if origin.strip()]
 
 
 @lru_cache
