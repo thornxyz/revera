@@ -149,7 +149,6 @@ export interface ChatQueryRequest {
     query: string;
     use_web?: boolean;
     document_ids?: string[];
-    generate_image?: boolean;
 }
 
 export interface ChatQueryResponse {
@@ -309,7 +308,7 @@ export async function sendChatMessageStream(
                                 callbacks?.onTitleUpdated?.(data.title, data.chat_id);
                                 break;
                             case "complete":
-                                callbacks?.onComplete?.(data);
+                                await callbacks?.onComplete?.(data);
                                 streamCompleted = true;
                                 break;
                             case "error":

@@ -68,7 +68,7 @@ class ImageIngestionService:
         # Validate file size
         if len(file_content) > MAX_IMAGE_SIZE:
             raise ValueError(
-                f"Image too large. Maximum size is {MAX_IMAGE_SIZE // (1024*1024)}MB"
+                f"Image too large. Maximum size is {MAX_IMAGE_SIZE // (1024 * 1024)}MB"
             )
 
         # 1. Upload image to Supabase Storage first
@@ -108,7 +108,7 @@ class ImageIngestionService:
                 doc_data["chat_id"] = str(chat_id)
 
             doc_result = self.supabase.table("documents").insert(doc_data).execute()
-        except Exception as e:
+        except Exception:
             await self._delete_from_storage(storage_path)
             logger.exception("[IMAGE_INGEST] Failed to create document record")
             raise
@@ -210,14 +210,17 @@ class ImageIngestionService:
         image_bytes: bytes,
         user_id: UUID,
         prompt: str,
+        chat_id: UUID | None = None,
     ) -> str:
         """
-        Store a generated image in Supabase Storage and return the path.
+        Store a generated image in Supabase Storage, create a document
+        record so it is associated with the chat, and return the path.
 
         Args:
             image_bytes: Raw bytes of the generated image
             user_id: ID of the user who generated it
             prompt: The prompt used to generate it (for filename)
+            chat_id: Optional chat to associate the image with (for cleanup)
 
         Returns:
             Storage path (e.g. users/{user_id}/images/{uuid}.png)
@@ -239,10 +242,33 @@ class ImageIngestionService:
                 file=image_bytes,
                 file_options={"content-type": "image/png"},
             )
-            return storage_path
         except Exception as e:
             logger.error(f"[IMAGE_INGEST] Storage upload failed: {e}")
             raise
+
+        # Create a document record so the image is tracked and cleaned up
+        try:
+            doc_data: dict[str, str] = {
+                "user_id": str(user_id),
+                "filename": f"{clean_prompt}.png",
+                "type": "image",
+                "image_url": storage_path,
+            }
+            if chat_id:
+                doc_data["chat_id"] = str(chat_id)
+
+            self.supabase.table("documents").insert(doc_data).execute()
+            logger.info(
+                f"[IMAGE_INGEST] Created document record for generated image "
+                f"(chat_id={chat_id})"
+            )
+        except Exception as e:
+            logger.warning(
+                f"[IMAGE_INGEST] Failed to create document record for generated "
+                f"image, storage object may be orphaned: {e}"
+            )
+
+        return storage_path
 
     async def _store_image(
         self,

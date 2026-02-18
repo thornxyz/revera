@@ -19,7 +19,7 @@ class ChatCleanupService:
     Deletion Order (children before parents):
     1. Agent memories (InMemoryStore - episodic/semantic)
     2. Document embeddings (Qdrant vectors filtered by chat_id)
-    3. Documents (triggers cascade to document_chunks)
+    3. Documents (embeddings cascade delete via Qdrant)
     4. Agent logs (cascade from research_sessions)
     5. Research sessions
     6. Messages

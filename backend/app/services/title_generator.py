@@ -44,7 +44,7 @@ def generate_title_from_query(query: str, max_words: int = 5) -> str:
         return " ".join(word.capitalize() for word in words)
 
     # Use Gemini 3 Flash for title generation
-    gemini = GeminiClient(timeout=10)
+    gemini = GeminiClient(timeout_seconds=10)
 
     system_instruction = """You are a title generator. Your task is to extract key concepts from a query and create a short, descriptive title.
 
@@ -78,15 +78,57 @@ Rest Api Fastapi Implementation"""
     title = gemini.generate(
         prompt=user_prompt,
         system_instruction=system_instruction,
-        max_tokens=20,
+        max_tokens=50,
     ).strip()
 
     # Remove quotes if present
     title = title.strip("\"'")
 
-    # Sanitize and validate
-    if not title or len(title) == 0 or title.startswith("{"):
-        raise ValueError(f"Invalid title generated from query: {title}")
+    # Fallback: if model returned empty/invalid, extract key words from query
+    if not title or title.startswith("{"):
+        logger.warning(
+            f"[TITLE] Model returned invalid title '{title}', "
+            f"falling back to keyword extraction"
+        )
+        # Simple fallback: remove common stop words and take first few words
+        stop_words = {
+            "what",
+            "how",
+            "why",
+            "who",
+            "when",
+            "where",
+            "which",
+            "is",
+            "are",
+            "the",
+            "a",
+            "an",
+            "do",
+            "does",
+            "can",
+            "could",
+            "will",
+            "would",
+            "should",
+            "i",
+            "me",
+            "my",
+            "in",
+            "on",
+            "for",
+            "to",
+            "of",
+            "and",
+            "or",
+            "it",
+            "its",
+            "this",
+            "that",
+            "with",
+        }
+        words = [w for w in cleaned.split() if w.lower() not in stop_words]
+        title = " ".join(words[:max_words]) if words else cleaned.split()[0]
 
     # Ensure title case
     title = " ".join(word.capitalize() for word in title.split())

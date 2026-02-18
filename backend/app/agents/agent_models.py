@@ -101,7 +101,7 @@ class VerificationResult(BaseModel):
 class ExecutionStep(BaseModel):
     """A step in the execution plan."""
 
-    tool: Literal["rag", "web", "synthesis", "verification"] = "rag"
+    tool: Literal["rag", "web", "synthesis", "verification", "image_gen"] = "rag"
     description: str = ""
     parameters: dict = Field(default_factory=dict)
 

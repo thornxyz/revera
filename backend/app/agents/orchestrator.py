@@ -129,7 +129,7 @@ class Orchestrator:
         # Enforce Chat-Scoped Document Validation
         chat_documents = (
             self.supabase.table("documents")
-            .select("id, type, image_url, filename")
+            .select("id, type, image_url, filename, metadata")
             .eq("chat_id", str(chat_id))
             .execute()
         )
@@ -145,19 +145,12 @@ class Orchestrator:
 
                 # Load image contexts for multimodal synthesis
                 if d.get("type") == "image" and d.get("image_url"):
-                    # Get the image description from chunks
-                    chunk_result = (
-                        self.supabase.table("document_chunks")
-                        .select("content")
-                        .eq("document_id", doc_id)
-                        .limit(1)
-                        .execute()
-                    )
+                    metadata = d.get("metadata", {})
                     description = ""
-                    if chunk_result.data and len(chunk_result.data) > 0:
-                        first_chunk = chunk_result.data[0]
-                        if isinstance(first_chunk, dict):
-                            description = first_chunk.get("content", "")
+                    if isinstance(metadata, dict):
+                        description = metadata.get(
+                            "description_preview", ""
+                        ) or metadata.get("description", "")
 
                     filename = str(d.get("filename") or "image")
                     storage_path = str(d.get("image_url") or "")
@@ -209,6 +202,8 @@ class Orchestrator:
             "internal_sources": [],
             "web_sources": [],
             "image_contexts": image_contexts,
+            "generated_image_url": None,
+            "generated_image_storage_path": None,
             "tavily_answer": None,
             "synthesis_result": None,
             "verification": None,
@@ -226,7 +221,14 @@ class Orchestrator:
         synthesis_result: dict | None = None
         verification: dict | None = None
 
-        known_nodes = {"planning", "retrieval", "web_search", "synthesis", "critic"}
+        known_nodes = {
+            "planning",
+            "retrieval",
+            "web_search",
+            "image_gen",
+            "synthesis",
+            "critic",
+        }
 
         try:
             # --- Stream the LangGraph graph ---

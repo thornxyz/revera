@@ -7,7 +7,7 @@ A research system combining **Triple Hybrid RAG** (Dense + Sparse + ColBERT), li
 ```mermaid
 flowchart TB
     subgraph Client["Frontend (Next.js)"]
-        UI["Chat UI"] --> Store["Zustand Store"]
+        UI["Chat UI + Streamdown"] --> Store["Zustand Store"]
     end
     
     subgraph Server["Backend (FastAPI)"]
@@ -19,15 +19,12 @@ flowchart TB
         direction LR
         Plan["🎯 Plan"] --> Retrieve["📚 RAG"]
         Plan --> Web["🌐 Web"]
+        Plan --> ImgGen["🎨 Image Gen"]
         Retrieve --> Synth["✍️ Synthesize"]
         Web --> Synth
+        ImgGen --> Synth
         Synth --> Critic["🔍 Critic"]
         Critic -->|refine| Synth
-    end
-    
-    subgraph ImageFlow["Image Generation Flow"]
-        direction LR
-        GenImg["🎨 Generate"]
     end
     
     subgraph External["External APIs"]
@@ -43,15 +40,14 @@ flowchart TB
     end
     
     Client <-.->|SSE Stream| Server
-    Server -->|generate_image=false| ResearchFlow
-    Server -->|generate_image=true| ImageFlow
+    Server --> ResearchFlow
     
     ResearchFlow --> Gemini
-    ImageFlow --> Gemini
+    ImgGen --> Gemini
     Web --> Tavily
     Retrieve --> Qdrant
     Synth --> SupaStorage
-    GenImg --> SupaStorage
+    ImgGen --> SupaStorage
     ResearchFlow --> Memory
     DocsAPI --> Supabase
 ```
@@ -61,30 +57,32 @@ flowchart TB
 - **🔍 Triple Hybrid RAG**: Combines Dense (semantic), Sparse (keyword), and ColBERT (late interaction) retrieval with **Reciprocal Rank Fusion (RRF)** for superior accuracy
 - **🧠 Thinking Mode**: Gemini 3's native thinking capability streams reasoning tokens in real-time — displayed in collapsible UI with execution timeline
 - **🖼️ Image Context**: Upload images alongside PDFs — Gemini 3 Vision analyzes images for multimodal research answers
-- **🎨 Image Generation**: Generate images from text prompts using Gemini's image model — automatically stored in Supabase Storage with signed URLs
-- **🤖 Multi-Agent Orchestration**: LangGraph workflow with planning, retrieval, web search, synthesis, and critic agents via `astream_events`
+- **🎨 Image Generation**: Planner autonomously decides when to generate images — runs as a first-class LangGraph node in parallel with retrieval and web search, with generated images tracked per chat for proper cleanup
+- **🤖 Multi-Agent Orchestration**: LangGraph workflow with planning, retrieval, web search, image generation, synthesis, and critic agents — all streamed via `astream_events`
 - **🌐 Live Web Search**: Tavily API with self-skip logic — runs in parallel with retrieval, skips automatically when not needed
-- **♻️ Iterative Refinement**: Critic agent verifies answers and triggers re-synthesis for low-confidence results
-- **⚡ Parallel Fan-Out**: Retrieval + Web Search execute concurrently after planning (~3x speedup)
-- **📊 Real-Time Streaming**: SSE-only architecture for live agent progress, answer/thought chunks streamed via LangGraph custom events
+- **♻️ Iterative Refinement**: Critic agent verifies answers and triggers re-synthesis for low-confidence results (resilient to API failures)
+- **⚡ Parallel Fan-Out**: Retrieval + Web Search + Image Generation execute concurrently after planning (~3x speedup)
+- **📊 Real-Time Streaming**: SSE-only architecture for live agent progress, answer/thought chunks, and generated image markdown streamed via LangGraph custom events
 - **📚 Chat-Scoped Documents**: Upload, index, and search PDFs and images — automatically scoped to the active chat
-- **💬 Chat Management**: Multi-turn conversations with comprehensive cascade cleanup on deletion
+- **💬 Chat Management**: Multi-turn conversations with comprehensive cascade cleanup on deletion (DB, storage, vectors, memory)
 - **🔐 Secure Authentication**: Google OAuth via Supabase with row-level security
 - **⚛️ Modern State Management**: Zustand store with custom hooks (`useStreamingChat`, `useUIState`) for clean, testable code
+- **📝 Streaming Markdown**: Vercel's Streamdown library with syntax highlighting, KaTeX math, citation formatting, and safe paragraph rendering for images
 
 ## Tech Stack
 
 | Component | Technology |
 |-----------|-----------|
 | **Frontend** | Next.js 16, React 19, TypeScript, Tailwind CSS v4, shadcn/ui |
+| **Markdown** | Streamdown (streaming-optimized), @streamdown/code, @streamdown/math (KaTeX) |
 | **State Management** | Zustand (chat store), Custom hooks (streaming, UI) |
 | **Backend** | FastAPI, Python 3.12+, asyncio |
-| **Orchestration** | LangGraph (state-based agent workflow) |
+| **Orchestration** | LangGraph (state-based agent workflow with parallel fan-out) |
 | **Vector Database** | Qdrant (Triple Hybrid: Dense + Sparse + ColBERT) |
 | **Agent Memory** | LangGraph InMemoryStore (episodic/semantic memory) |
 | **Embeddings** | Gemini 3 (3072d dense), FastEmbed (BM25, ColBERT) |
 | **LLM** | Gemini 3 Flash Preview (with native thinking mode) |
-| **Image Generation** | Gemini 2.5 Flash Image (text-to-image synthesis) |
+| **Image Generation** | Gemini 2.5 Flash Image (text-to-image, planner-driven) |
 | **Web Search** | Tavily API |
 | **Auth & Metadata** | Supabase (PostgreSQL, JWT) |
 | **Storage** | Supabase Storage (PDFs, images, generated images) |
@@ -188,7 +186,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 | POST | `/api/chats/` | Create new chat |
 | GET | `/api/chats/{id}` | Get chat details |
 | PUT | `/api/chats/{id}` | Update chat (e.g., title) |
-| DELETE | `/api/chats/{id}` | **Comprehensive deletion** (cascade across DB, Qdrant, memory) |
+| DELETE | `/api/chats/{id}` | **Comprehensive deletion** (cascade across DB, Qdrant, storage, memory) |
 | GET | `/api/chats/{id}/messages` | Get all messages in chat |
 | GET | `/api/chats/{id}/messages/{msg_id}/verification` | Poll verification status |
 | POST | `/api/chats/{id}/query/stream` | Send query with SSE streaming (answer, thoughts, sources) |
@@ -203,25 +201,24 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 
 ```json
 {
-  "query": "Your research question or image generation prompt",
+  "query": "Your research question",
   "use_web": true,
-  "document_ids": ["id1", "id2"],
-  "generate_image": false
+  "document_ids": ["id1", "id2"]
 }
 ```
 
 **Parameters:**
-- `query` (string, required): The research question or image generation prompt (max 2000 characters)
-- `use_web` (boolean, optional): Enable/disable live web search for research queries (default: `true`)
+- `query` (string, required): The research question (max 2000 characters). The planner will autonomously decide whether to generate an image based on the query intent.
+- `use_web` (boolean, optional): Enable/disable live web search (default: `true`)
 - `document_ids` (array of strings, optional): Restrict search to specific uploaded documents; if omitted, all chat documents are used
-- `generate_image` (boolean, optional): When `true`, generates an image from the query prompt instead of running research (default: `false`)
 
 **Streaming Event Types (SSE):**
-- `agent_status`: Agent node completion (planning, retrieval, web_search, synthesis, critic, image_gen)
-- `answer_chunk`: Streamed answer or generated image markdown
-- `thought_chunk`: Streamed thinking/reasoning text (for research mode)
+- `agent_status`: Agent node start/completion (planning, retrieval, web_search, image_gen, synthesis, critic)
+- `answer_chunk`: Streamed answer text and generated image markdown
+- `thought_chunk`: Streamed thinking/reasoning text
 - `sources`: Source list when available
 - `title_updated`: Auto-generated chat title
 - `complete`: Final payload with session metadata + agent timeline
 - `error`: Error payload
+
 

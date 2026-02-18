@@ -6,7 +6,7 @@ import json
 import logging
 from typing import AsyncGenerator
 
-from app.agents.base import BaseAgent, AgentInput, AgentOutput, ImageContext
+from app.agents.base import BaseAgent, AgentInput, AgentOutput
 from app.llm.gemini import get_gemini_client
 from app.services.image_ingestion import get_image_ingestion_service
 
@@ -64,6 +64,11 @@ WHEN IMAGES ARE PROVIDED:
 3. Connect visual observations to any text sources
 4. Note any details in images that answer the question
 
+IMAGE GENERATION (CRITICAL — READ CAREFULLY):
+You do NOT have any tools. You cannot call APIs, invoke DALL-E, or output JSON action blocks.
+A separate system handles image generation BEFORE you run. If you are told a generated image is available, it has ALREADY been created and will be appended to your response automatically.
+Your ONLY job when an image was generated is to write 1-2 sentences of plain text acknowledging the image (e.g., "Here's the generated image of X."). Do NOT output any JSON, tool calls, action objects, prompts, or code blocks. Just write a brief, natural sentence.
+
 CITATION RULES (CRITICAL):
 1. ONLY use information explicitly stated in the provided sources
 2. Every factual claim MUST have an inline citation using [Source N] format
@@ -120,22 +125,24 @@ class SynthesisAgent(BaseAgent):
         normalized = query.strip().lower()
         return any(re.search(pattern, normalized) for pattern in CONCISE_QUERY_PATTERNS)
 
+    @classmethod
+    def _build_detail_guidance(cls, query: str) -> str:
+        if cls._should_be_concise(query):
+            return (
+                "The user requested a brief response. Keep it tight (around 4-6 sentences), "
+                "focus on the key facts, and still include citations."
+            )
+        return (
+            "Provide a research-style response with context, key points, and implications or "
+            "limitations. Aim for multiple paragraphs or labeled sections while staying grounded "
+            "in the sources."
+        )
+
     async def run(self, input: AgentInput) -> AgentOutput:
         """Synthesize an answer from the provided context."""
         start_time = time.perf_counter()
 
-        concise = self._should_be_concise(input.query)
-        if concise:
-            detail_guidance = (
-                "The user requested a brief response. Keep it tight (around 4-6 sentences), "
-                "focus on the key facts, and still include citations."
-            )
-        else:
-            detail_guidance = (
-                "Provide a research-style response with context, key points, and implications or "
-                "limitations. Aim for multiple paragraphs or labeled sections while staying grounded "
-                "in the sources."
-            )
+        detail_guidance = self._build_detail_guidance(input.query)
 
         # Get context from previous agents
         internal_context = input.context.get("internal_sources", [])
@@ -273,18 +280,7 @@ Produce a well-cited answer in JSON format."""
         """
         start_time = time.perf_counter()
 
-        concise = self._should_be_concise(input.query)
-        if concise:
-            detail_guidance = (
-                "The user requested a brief response. Keep it tight (around 4-6 sentences), "
-                "focus on the key facts, and still include citations."
-            )
-        else:
-            detail_guidance = (
-                "Provide a research-style response with context, key points, and implications or "
-                "limitations. Aim for multiple paragraphs or labeled sections while staying grounded "
-                "in the sources."
-            )
+        detail_guidance = self._build_detail_guidance(input.query)
 
         # Get context from previous agents
         internal_context = input.context.get("internal_sources", [])
@@ -354,6 +350,13 @@ Produce a well-cited answer in JSON format."""
         context_text = "\n\n---\n\n".join(context_parts)
         has_images = len(image_bytes_list) > 0
 
+        # Check for generated image from image_gen node
+        generated_image_url = input.context.get("generated_image_url")
+        if generated_image_url:
+            logger.info(
+                f"[{self.name}] Including generated image in answer: {generated_image_url}"
+            )
+
         # Check if this is a refinement pass
         is_refinement = input.context.get("is_refinement", False)
 
@@ -398,12 +401,27 @@ Write an IMPROVED answer that addresses ALL the critic's concerns.
 Use inline [Source N] citations for every factual claim.
 DO NOT repeat the same unsupported claims."""
         else:
+            # Build image generation context for the prompt
+            image_gen_note = ""
+            if generated_image_url:
+                image_gen_note = (
+                    "\n\n*** CRITICAL INSTRUCTION — IMAGE ALREADY GENERATED ***\n"
+                    "An image has ALREADY been generated for this request by an external system. "
+                    "It will be embedded automatically below your text.\n"
+                    "You MUST:\n"
+                    "- Write ONLY 1-2 plain text sentences (e.g., 'Here is the generated image of a blue dragon.')\n"
+                    "- Do NOT output any JSON, action blocks, tool calls, code, or prompts\n"
+                    "- Do NOT describe how to generate the image or write a DALL-E prompt\n"
+                    "- Do NOT write a research-style answer — just a brief acknowledgment\n"
+                    "- The image is the main deliverable, your text is secondary"
+                )
+
             prompt = f"""Answer this research question based on the provided context:
 
 Question: {input.query}
 
 Response detail guidance: {detail_guidance}
-
+{image_gen_note}
 Context:
 {context_text}
 
@@ -468,6 +486,13 @@ Write a well-formatted markdown answer with inline [Source N] citations."""
             f"[{self.name}] Streaming complete: answer={len(full_answer)} chars, "
             f"thoughts={len(full_thoughts)} chars, latency={latency}ms"
         )
+
+        # Append generated image to answer if available and stream it to client
+        if generated_image_url:
+            image_markdown = f"\n\n![Generated Image]({generated_image_url})"
+            full_answer += image_markdown
+            yield {"type": "answer_chunk", "content": image_markdown}
+            logger.info(f"[{self.name}] Appended generated image to answer")
 
         # Extract sources used from the answer (look for [Source N] patterns)
 

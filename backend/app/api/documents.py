@@ -2,7 +2,6 @@
 
 import logging
 import uuid
-from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from pydantic import BaseModel
 from uuid import UUID
@@ -10,7 +9,6 @@ from uuid import UUID
 from app.services.ingestion import get_ingestion_service
 from app.services.image_ingestion import (
     get_image_ingestion_service,
-    SUPPORTED_IMAGE_TYPES,
 )
 from app.services.title_generator import generate_title_from_filename
 from app.core.auth import get_current_user_id
@@ -144,7 +142,7 @@ async def upload_document(
     if content_len > max_size:
         raise HTTPException(
             status_code=400,
-            detail=f"File too large (max {max_size // (1024*1024)}MB)",
+            detail=f"File too large (max {max_size // (1024 * 1024)}MB)",
         )
 
     try:

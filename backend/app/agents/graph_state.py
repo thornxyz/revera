@@ -48,6 +48,10 @@ class ResearchState(TypedDict):
     # Image context for multimodal synthesis
     image_contexts: list[ImageContextState]
 
+    # Image generation outputs (set by image_gen node)
+    generated_image_url: str | None
+    generated_image_storage_path: str | None
+
     # Synthesis outputs
     synthesis_result: dict | None
 

@@ -16,6 +16,37 @@ interface StreamMarkdownProps {
 }
 
 /**
+ * HAST node type passed by Streamdown via the `node` prop.
+ */
+interface HastNode {
+    type?: string;
+    tagName?: string;
+    children?: HastNode[];
+}
+
+/**
+ * Recursively checks if a HAST node tree contains an <img> element.
+ * Streamdown wraps images in <div> wrappers, so if a <p> contains an
+ * image the resulting HTML would be <p><div>...</div></p> which is invalid.
+ */
+function hastContainsImage(node: HastNode): boolean {
+    if (node.tagName === "img") return true;
+    return node.children?.some(hastContainsImage) ?? false;
+}
+
+/**
+ * Custom paragraph component that avoids the <div> inside <p> hydration error.
+ * Streamdown passes a HAST `node` prop to component overrides. We inspect it
+ * to detect images and render a <div> instead of <p> when needed.
+ */
+function SafeParagraph({ node, ...rest }: React.HTMLAttributes<HTMLParagraphElement> & { node?: HastNode }) {
+    if (node && hastContainsImage(node)) {
+        return <div {...rest} />;
+    }
+    return <p {...rest} />;
+}
+
+/**
  * Markdown renderer optimized for AI streaming responses.
  * 
  * Uses Vercel's streamdown library which handles:
@@ -91,6 +122,9 @@ export function StreamMarkdown({
                 plugins={{
                     code: code,
                     math: math,
+                }}
+                components={{
+                    p: SafeParagraph,
                 }}
                 isAnimating={isStreaming}
                 className="leading-relaxed text-slate-700"

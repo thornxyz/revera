@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
 import { User, Bot, ExternalLink, Loader2 } from "lucide-react";
 import { StreamMarkdown } from "./stream-markdown";
 import { Message, Source } from "@/lib/api";
@@ -14,43 +14,7 @@ interface MessageListProps {
 }
 
 export function MessageList({ messages, isLoading = false, className }: MessageListProps) {
-    const endOfMessagesRef = useRef<HTMLDivElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
-    const userHasScrolledRef = useRef(false);
-    const lastScrollTopRef = useRef(0);
-
-    // Track if user has manually scrolled up
-    useEffect(() => {
-        const container = containerRef.current?.parentElement;
-        if (!container) return;
-
-        const handleScroll = () => {
-            const { scrollTop, scrollHeight, clientHeight } = container;
-            const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
-
-            // If user scrolled up, mark it
-            if (scrollTop < lastScrollTopRef.current) {
-                userHasScrolledRef.current = true;
-            }
-
-            // If user scrolled back to bottom, allow auto-scroll again
-            if (isAtBottom) {
-                userHasScrolledRef.current = false;
-            }
-
-            lastScrollTopRef.current = scrollTop;
-        };
-
-        container.addEventListener("scroll", handleScroll);
-        return () => container.removeEventListener("scroll", handleScroll);
-    }, []);
-
-    // Auto-scroll to bottom when new messages arrive (only if user hasn't scrolled up)
-    useEffect(() => {
-        if (!userHasScrolledRef.current && endOfMessagesRef.current) {
-            endOfMessagesRef.current.scrollIntoView({ behavior: "smooth" });
-        }
-    }, [messages]);
 
     if (messages.length === 0 && !isLoading) {
         return (
@@ -64,7 +28,7 @@ export function MessageList({ messages, isLoading = false, className }: MessageL
     }
 
     return (
-        <div ref={containerRef} className={cn("max-w-4xl mx-auto space-y-8 p-6 pb-32", className)}>
+        <div ref={containerRef} className={cn("max-w-4xl mx-auto space-y-8 p-6", className)}>
             {messages.map((message, index) => (
                 <div key={message.id} className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
                     {/* User Query */}
@@ -193,8 +157,6 @@ export function MessageList({ messages, isLoading = false, className }: MessageL
                 </div>
             )}
 
-            {/* Invisible marker for auto-scroll */}
-            <div ref={endOfMessagesRef} />
         </div>
     );
 }

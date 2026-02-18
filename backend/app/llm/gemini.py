@@ -19,22 +19,26 @@ logger = logging.getLogger(__name__)
 class GeminiClient:
     """Wrapper for Google Gemini API."""
 
-    def __init__(self, timeout: int = 120):
+    def __init__(self, timeout_seconds: int = 300):
         """
         Initialize Gemini client.
 
         Args:
-            timeout: Request timeout in seconds (default: 120)
+            timeout_seconds: Request timeout in seconds (default: 300 = 5 minutes)
         """
         settings = get_settings()
-        # Note: genai.Client doesn't support timeout in constructor
-        # Timeout must be set at request level via http_options
-        self.client = genai.Client(api_key=settings.gemini_api_key)
+        # HttpOptions expects milliseconds; convert from seconds.
+        timeout_ms = int(timeout_seconds * 1000)
+        http_options = types.HttpOptions(timeout=timeout_ms)
+        self.client = genai.Client(
+            api_key=settings.gemini_api_key,
+            http_options=http_options,
+        )
         self.embedding_model = GEMINI_EMBEDDING_MODEL
         self.model = GEMINI_MODEL
         self.image_model = GEMINI_IMAGE_MODEL
         self.thinking_level = GEMINI_THINKING_LEVEL
-        self.default_timeout = timeout
+        self.default_timeout = timeout_seconds
 
     def embed_text(self, text: str) -> list[float]:
         """Generate embedding for a single text."""
@@ -96,9 +100,15 @@ class GeminiClient:
         system_instruction: str | None = None,
         max_tokens: int = 4096,
     ) -> str:
-        """Generate text response from LLM."""
+        """Generate text response from LLM (minimal thinking, no streaming)."""
         config = types.GenerateContentConfig(
             max_output_tokens=max_tokens,
+            # Use minimal thinking so the token budget mostly goes to the answer.
+            # This method is used for simple tasks (e.g. title generation)
+            # where deep thinking is unnecessary.
+            thinking_config=types.ThinkingConfig(
+                thinking_level="minimal",  # type: ignore
+            ),
         )
 
         if system_instruction:
@@ -117,7 +127,7 @@ class GeminiClient:
         system_instruction: str | None = None,
         temperature: float = 0.3,
         max_tokens: int | None = None,
-        timeout: int | None = None,
+        timeout_seconds: int | None = None,
     ) -> str:
         """
         Generate structured JSON response.
@@ -127,7 +137,7 @@ class GeminiClient:
             system_instruction: Optional system instruction
             temperature: Sampling temperature (0.0-1.0)
             max_tokens: Maximum output tokens
-            timeout: Request timeout in seconds (overrides default)
+            timeout_seconds: Request timeout in seconds (overrides default)
 
         Returns:
             Raw response text (should be valid JSON)
@@ -142,6 +152,9 @@ class GeminiClient:
 
         if system_instruction:
             config.system_instruction = system_instruction
+
+        if timeout_seconds is not None:
+            config.http_options = types.HttpOptions(timeout=int(timeout_seconds * 1000))
 
         try:
             response = self.client.models.generate_content(
@@ -182,6 +195,7 @@ class GeminiClient:
         system_instruction: str | None = None,
         temperature: float = 0.3,
         max_tokens: int | None = None,
+        timeout_seconds: int | None = None,
     ) -> str:
         """
         Generate structured JSON response asynchronously (respects asyncio.wait_for timeout).
@@ -191,6 +205,7 @@ class GeminiClient:
             system_instruction: Optional system instruction
             temperature: Sampling temperature (0.0-1.0)
             max_tokens: Maximum output tokens
+            timeout_seconds: Request timeout in seconds (overrides default)
 
         Returns:
             Raw response text (should be valid JSON)
@@ -205,6 +220,9 @@ class GeminiClient:
 
         if system_instruction:
             config.system_instruction = system_instruction
+
+        if timeout_seconds is not None:
+            config.http_options = types.HttpOptions(timeout=int(timeout_seconds * 1000))
 
         try:
             # Use async API which properly respects asyncio cancellation
@@ -569,10 +587,20 @@ Be thorough but factual - only describe what you can see."""
                 return []
 
             for candidate in response.candidates:
+                logger.debug(
+                    f"[Gemini] Candidate: finish_reason={candidate.finish_reason}, safety_ratings={candidate.safety_ratings}"
+                )
                 if candidate.content and candidate.content.parts:
                     for part in candidate.content.parts:
+                        logger.debug(
+                            f"[Gemini] Part: has_inline_data={bool(part.inline_data)}, has_text={bool(part.text)}"
+                        )
                         if part.inline_data and part.inline_data.data:
                             image_bytes_list.append(part.inline_data.data)
+                        elif part.text:
+                            logger.debug(
+                                f"[Gemini] Part text (not an image): {part.text[:100]}"
+                            )
 
             logger.info(
                 f"[Gemini] Successfully generated {len(image_bytes_list)} image(s)"

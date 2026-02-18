@@ -5,6 +5,7 @@ import {
     pollVerificationStatus,
     createChat,
     getChatMessages,
+    listChats,
     Source,
     ChatWithPreview,
 } from '@/lib/api';
@@ -40,10 +41,10 @@ export function useStreamingChat() {
         currentChatId,
         setCurrentChat,
         setMessages,
+        setChats,
         updateChatTitle,
         updateMessageVerification,
         addChat,
-        isImageMode,
     } = useChatStore();
 
     const resetStreamingState = useCallback(() => {
@@ -101,7 +102,6 @@ export function useStreamingChat() {
                 {
                     query,
                     use_web: options?.useWeb ?? true,
-                    generate_image: isImageMode,
                 },
                 {
                     onAgentStatus: (node, status) => {
@@ -126,15 +126,29 @@ export function useStreamingChat() {
                     onSources: (sources) => setStreamingSources((prev) => [...prev, ...sources]),
                     onTitleUpdated: (title, updatedChatId) => updateChatTitle(updatedChatId, title),
                     onComplete: async (data) => {
-                        // Refresh messages from server
+                        // Fetch messages first (async), then apply all state
+                        // changes synchronously so React can batch them into
+                        // a single render pass.
+                        let fetchedMessages;
                         try {
-                            const messages = await getChatMessages(chatId!);
-                            setMessages(messages);
+                            fetchedMessages = await getChatMessages(chatId!);
                         } catch (err) {
                             console.error("Failed to refresh messages:", err);
                         }
 
+                        // Apply state changes synchronously — React 18 batches
+                        // these into one render, preventing the scroll jump
+                        // that occurred when streaming UI unmounted separately.
                         resetStreamingState();
+                        if (fetchedMessages) setMessages(fetchedMessages);
+
+                        // Refresh sidebar chat list (message count, preview, etc.)
+                        try {
+                            const updatedChats = await listChats();
+                            setChats(updatedChats);
+                        } catch (err) {
+                            console.error("Failed to refresh chat list:", err);
+                        }
 
                         const duration = ((Date.now() - streamStartTimeRef.current.getTime()) / 1000).toFixed(1);
                         toast.success("Research complete", {
@@ -168,7 +182,7 @@ export function useStreamingChat() {
             resetStreamingState();
             toast.error("Research failed", { description: errorMessage });
         }
-    }, [currentChatId, setCurrentChat, setMessages, updateChatTitle, updateMessageVerification, addChat, resetStreamingState, isImageMode]);
+    }, [currentChatId, setCurrentChat, setMessages, setChats, updateChatTitle, updateMessageVerification, addChat, resetStreamingState]);
 
     return {
         // State

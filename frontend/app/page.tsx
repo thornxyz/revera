@@ -5,7 +5,6 @@ import {
   Send,
   Loader2,
   Sparkles,
-  ImagePlus,
   Upload,
   Brain,
   ChevronDown,
@@ -45,8 +44,6 @@ export default function ResearchPage() {
     setMessages,
     clearChat,
     addChat,
-    isImageMode,
-    setIsImageMode,
   } = useChatStore();
 
   // Custom hooks for streaming and UI
@@ -54,10 +51,10 @@ export default function ResearchPage() {
   const ui = useUIState();
 
   // Refs for auto-scroll
-  const streamingEndRef = useRef<HTMLDivElement>(null);
   const thinkingBoxRef = useRef<HTMLDivElement>(null);
   const userScrolledAwayRef = useRef(false);
   const chatAreaRef = useRef<HTMLDivElement>(null);
+  const wasStreamingRef = useRef(false);
 
   // Track if user has scrolled away during streaming
   useEffect(() => {
@@ -74,10 +71,26 @@ export default function ResearchPage() {
     return () => chatArea.removeEventListener('scroll', handleScroll);
   }, []);
 
+  // Reset scroll tracking when streaming ends so the post-stream
+  // scroll-to-bottom isn't blocked
+  useEffect(() => {
+    if (streaming.isStreaming) {
+      wasStreamingRef.current = true;
+    } else if (wasStreamingRef.current) {
+      // Streaming just ended — reset the user-scrolled flag so the
+      // messages-change effect below can scroll to the new content
+      wasStreamingRef.current = false;
+      userScrolledAwayRef.current = false;
+    }
+  }, [streaming.isStreaming]);
+
   // Auto-scroll during streaming (only if user hasn't scrolled away)
   useEffect(() => {
-    if (streaming.isStreaming && !userScrolledAwayRef.current && streamingEndRef.current) {
-      streamingEndRef.current.scrollIntoView({ behavior: "smooth" });
+    if (streaming.isStreaming && !userScrolledAwayRef.current && chatAreaRef.current) {
+      chatAreaRef.current.scrollTo({
+        top: chatAreaRef.current.scrollHeight,
+        behavior: "smooth",
+      });
     }
   }, [streaming.isStreaming, streaming.streamingAnswer, streaming.streamingThoughts]);
 
@@ -88,13 +101,16 @@ export default function ResearchPage() {
     }
   }, [streaming.streamingThoughts]);
 
-  // Scroll to bottom when switching chats or loading new messages
+  // Scroll to bottom when switching chats or loading new messages.
+  // Uses a double-RAF to wait for the DOM to fully settle after
+  // streaming elements unmount and the MessageList re-renders.
   useEffect(() => {
     const chatArea = chatAreaRef.current;
     if (chatArea) {
-      // Use requestAnimationFrame to wait for DOM to render the messages
       requestAnimationFrame(() => {
-        chatArea.scrollTop = chatArea.scrollHeight;
+        requestAnimationFrame(() => {
+          chatArea.scrollTop = chatArea.scrollHeight;
+        });
       });
     }
   }, [currentChatId, messages]);
@@ -117,8 +133,6 @@ export default function ResearchPage() {
     if (!query.trim()) return;
     const currentQuery = query;
     setQuery("");
-    // Reset image mode after sending so the next message defaults to research
-    if (isImageMode) setIsImageMode(false);
     await streaming.sendMessage(currentQuery);
   };
 
@@ -171,13 +185,13 @@ export default function ResearchPage() {
                 Chats
               </button>
               <button
-                onClick={() => ui.setActiveTab("documents")}
-                className={`flex-1 py-3 text-sm font-medium transition-colors ${ui.activeTab === "documents"
+                onClick={() => ui.setActiveTab("attachments")}
+                className={`flex-1 py-3 text-sm font-medium transition-colors ${ui.activeTab === "attachments"
                   ? "text-emerald-700 border-b-2 border-emerald-500 bg-emerald-50"
                   : "text-slate-500 hover:text-slate-700 hover:bg-slate-100"
                   }`}
               >
-                Documents
+                Attachments
               </button>
             </div>
 
@@ -201,7 +215,7 @@ export default function ResearchPage() {
                     </Button>
                   </div>
                   <div className="flex-1 overflow-hidden">
-                    <DocumentsPanel chatId={currentChatId} />
+                    <DocumentsPanel chatId={currentChatId} refreshToken={ui.attachmentsRefresh} />
                   </div>
                 </div>
               )}
@@ -210,7 +224,7 @@ export default function ResearchPage() {
         }
       >
         {/* Main Content */}
-        <div className="flex-1 flex flex-col h-full min-h-0 bg-linear-to-br from-white via-slate-50 to-emerald-50 relative">
+        <div className="flex-1 flex flex-col h-full min-h-0 bg-linear-to-br from-white via-slate-50 to-emerald-50 relative overflow-hidden">
           {/* Header */}
           <header className="border-b border-slate-200/70 px-4 sm:px-6 py-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between backdrop-blur-sm bg-white/70">
             <div>
@@ -241,7 +255,7 @@ export default function ResearchPage() {
           </header>
 
           {/* Chat Area */}
-          <div className="flex-1 min-h-0 flex flex-col">
+          <div className="flex-1 flex flex-col min-h-0">
             {streaming.error && (
               <div className="m-4 p-4 rounded-lg border-rose-200 bg-rose-50/80 backdrop-blur-sm">
                 <p className="text-sm text-rose-600">{streaming.error}</p>
@@ -250,7 +264,7 @@ export default function ResearchPage() {
 
             {/* Messages or Welcome Screen */}
             {!currentChatId && messages.length === 0 && !streaming.isStreaming ? (
-              <div className="flex-1 flex flex-col items-center justify-center text-center px-4">
+              <div className="flex-1 flex flex-col items-center justify-center text-center px-4 min-h-0">
                 <div className="relative">
                   <div className="absolute inset-0 bg-linear-to-r from-emerald-400 to-sky-400 blur-3xl opacity-20 rounded-full"></div>
                   <div className="relative text-7xl sm:text-8xl mb-6">🔬</div>
@@ -264,12 +278,12 @@ export default function ResearchPage() {
                 </p>
               </div>
             ) : (
-              <div ref={chatAreaRef} className="flex-1 overflow-y-auto">
+              <div ref={chatAreaRef} className="flex-1 overflow-y-auto min-h-0">
                 <MessageList messages={messages} isLoading={isLoading && !streaming.isStreaming} />
 
                 {/* Streaming Content */}
                 {streaming.isStreaming && (
-                  <div className="space-y-6 p-6 pb-32">
+                  <div className="space-y-6 px-6 py-4">
                     {/* Agent Progress */}
                     <AgentProgress activityLog={streaming.activityLog} currentAgent={streaming.currentAgent} />
 
@@ -330,8 +344,6 @@ export default function ResearchPage() {
                       </Card>
                     )}
 
-                    {/* Invisible marker for auto-scroll during streaming */}
-                    <div ref={streamingEndRef} />
                   </div>
                 )}
               </div>
@@ -339,31 +351,16 @@ export default function ResearchPage() {
           </div>
 
           {/* Input Area */}
-          <div className="p-4 sm:p-8 pb-10 sm:pb-12 bg-transparent pointer-events-none absolute bottom-0 left-0 right-0 z-10">
-            <div className="max-w-4xl mx-auto w-full pointer-events-auto">
+          <div className="px-4 sm:px-6 py-3 sm:py-4 bg-transparent shrink-0">
+            <div className="max-w-4xl mx-auto w-full">
               <div
                 className={cn(
                   "input-pill-container transition-all duration-500",
                   "glass-morphism bg-white/70 ring-1 ring-slate-200/50",
-                  isImageMode ? "emerald-glow ring-emerald-400/30" : "premium-shadow"
+                  "premium-shadow"
                 )}
               >
                 <div className="flex items-center gap-1 pl-2">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setIsImageMode(!isImageMode)}
-                    className={cn(
-                      "h-10 w-10 rounded-xl transition-all duration-300",
-                      isImageMode
-                        ? "bg-emerald-100/80 text-emerald-600"
-                        : "text-slate-400 hover:text-slate-600 hover:bg-slate-100/50"
-                    )}
-                    title={isImageMode ? "Image Mode Active" : "Enable Image Generation"}
-                  >
-                    <ImagePlus className={cn("h-5 w-5", isImageMode && "animate-pulse")} />
-                  </Button>
-
                   <Button
                     variant="ghost"
                     size="icon"
@@ -381,11 +378,9 @@ export default function ResearchPage() {
                     onChange={(e) => setQuery(e.target.value)}
                     onKeyDown={handleKeyDown}
                     placeholder={
-                      isImageMode
-                        ? "Describe the image you want to generate..."
-                        : currentChatId
-                          ? "Continue the conversation..."
-                          : "Ask a research question..."
+                      currentChatId
+                        ? "Continue the conversation..."
+                        : "Ask a research question..."
                     }
                     className="h-11 min-h-11 max-h-35 bg-transparent border-0 ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 px-2 py-3 text-sm resize-none"
                     disabled={isLoading}
@@ -397,12 +392,7 @@ export default function ResearchPage() {
                     size="icon"
                     onClick={handleSubmit}
                     disabled={isLoading || !query.trim()}
-                    className={cn(
-                      "h-9 w-9 rounded-xl transition-all duration-300 shadow-sm",
-                      isImageMode
-                        ? "bg-emerald-500 hover:bg-emerald-600 text-white"
-                        : "bg-slate-900 hover:bg-slate-800 text-white"
-                    )}
+                    className="h-9 w-9 rounded-xl transition-all duration-300 shadow-sm bg-slate-900 hover:bg-slate-800 text-white"
                   >
                     {isLoading ? (
                       <Loader2 className="h-4.5 w-4.5 animate-spin" />
@@ -422,22 +412,28 @@ export default function ResearchPage() {
           chatId={currentChatId}
           onOpenChange={ui.setUploadDialogOpen}
           onUploadSuccess={() => {
-            // Documents panel will auto-refresh via its own state
+            ui.refreshAttachments();
           }}
-          onChatCreated={(newChatId, title) => {
-            // Create chat preview and add to store
-            const chatPreview = {
-              id: newChatId,
-              user_id: user.id,
-              title: title || "New Chat",
-              thread_id: "",
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-              last_message_preview: null,
-              message_count: 0,
-            };
-            addChat(chatPreview);
-            setCurrentChat(newChatId);
+          onChatCreated={async (newChatId, title) => {
+            try {
+              // Create chat preview and add to store
+              const chatPreview = {
+                id: newChatId,
+                user_id: user.id,
+                title: title || "New Chat",
+                thread_id: "",
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+                last_message_preview: null,
+                message_count: 0,
+              };
+              addChat(chatPreview);
+              setCurrentChat(newChatId);
+              await loadChatMessages(newChatId);
+              ui.refreshAttachments();
+            } catch (err) {
+              console.error("Failed to initialize new chat:", err);
+            }
           }}
         />
       </ResizableLayout>

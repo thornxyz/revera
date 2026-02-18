@@ -9,8 +9,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Gemini Models (hardcoded, not from env)
 GEMINI_EMBEDDING_MODEL = "gemini-embedding-001"
-GEMINI_MODEL = "gemini-3-flash-preview"
-GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image"
+GEMINI_MODEL = "gemini-3-flash-preview"  # Text generation & reasoning
+GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image"  # Image generation (Gemini 3 does not yet expose image gen)
 
 # Gemini Thinking Configuration
 GEMINI_THINKING_LEVEL = "medium"  # Options: minimal, low, medium, high
