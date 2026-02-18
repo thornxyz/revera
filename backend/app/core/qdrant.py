@@ -1,7 +1,12 @@
 """Qdrant client wrapper and collection management."""
 
+import logging
+
 from qdrant_client import QdrantClient, models
+
 from app.core.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class QdrantService:
@@ -43,7 +48,7 @@ class QdrantService:
                     "sparse": models.SparseVectorParams(),
                 },
             )
-            print(f"Created collection: {self.collection_name}")
+            logger.info(f"[QDRANT] Created collection: {self.collection_name}")
 
             # Create payload indexes for filtering
             self.client.create_payload_index(
@@ -56,9 +61,9 @@ class QdrantService:
                 field_name="document_id",
                 field_schema=models.PayloadSchemaType.KEYWORD,
             )
-            print("Created payload indexes for user_id and document_id")
+            logger.info("[QDRANT] Created payload indexes for user_id and document_id")
         else:
-            print(f"Using existing collection: {self.collection_name}")
+            logger.info(f"[QDRANT] Using existing collection: {self.collection_name}")
 
     def get_client(self) -> QdrantClient:
         return self.client

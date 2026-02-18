@@ -1,26 +1,29 @@
-import logging
-import sys
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from app.core.config import get_settings
+from app.core.logging_config import setup_logging, get_logger
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
-
-logger = logging.getLogger(__name__)
+# Setup logging before any other imports
 settings = get_settings()
+setup_logging(level=settings.log_level, log_format=settings.log_format)
+
+logger = get_logger(__name__)
 
 # Enable verbose logging in debug mode
 if settings.debug:
+    import logging
+
     logging.getLogger("app").setLevel(logging.DEBUG)
     logger.info("[DEBUG] Debug mode enabled - verbose logging active")
+
+# Rate limiter - 60 requests per minute by default
+limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
 
 
 @asynccontextmanager
@@ -40,19 +43,24 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Rate limiting
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # CORS middleware for frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 
 
 @app.get("/health")
-async def health_check():
-    """Health check endpoint."""
+@limiter.exempt
+async def health_check(request: Request):
+    """Health check endpoint (rate limit exempt)."""
     return {"status": "healthy", "app": settings.app_name}
 
 

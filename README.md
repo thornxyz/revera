@@ -54,20 +54,12 @@ flowchart TB
 
 ## Key Features
 
-- **🔍 Triple Hybrid RAG**: Combines Dense (semantic), Sparse (keyword), and ColBERT (late interaction) retrieval with **Reciprocal Rank Fusion (RRF)** for superior accuracy
-- **🧠 Thinking Mode**: Gemini 3's native thinking capability streams reasoning tokens in real-time — displayed in collapsible UI with execution timeline
-- **🖼️ Image Context**: Upload images alongside PDFs — Gemini 3 Vision analyzes images for multimodal research answers
-- **🎨 Image Generation**: Planner autonomously decides when to generate images — runs as a first-class LangGraph node in parallel with retrieval and web search, with generated images tracked per chat for proper cleanup
-- **🤖 Multi-Agent Orchestration**: LangGraph workflow with planning, retrieval, web search, image generation, synthesis, and critic agents — all streamed via `astream_events`
-- **🌐 Live Web Search**: Tavily API with self-skip logic — runs in parallel with retrieval, skips automatically when not needed
-- **♻️ Iterative Refinement**: Critic agent verifies answers and triggers re-synthesis for low-confidence results (resilient to API failures)
-- **⚡ Parallel Fan-Out**: Retrieval + Web Search + Image Generation execute concurrently after planning (~3x speedup)
-- **📊 Real-Time Streaming**: SSE-only architecture for live agent progress, answer/thought chunks, and generated image markdown streamed via LangGraph custom events
-- **📚 Chat-Scoped Documents**: Upload, index, and search PDFs and images — automatically scoped to the active chat
-- **💬 Chat Management**: Multi-turn conversations with comprehensive cascade cleanup on deletion (DB, storage, vectors, memory)
-- **🔐 Secure Authentication**: Google OAuth via Supabase with row-level security
-- **⚛️ Modern State Management**: Zustand store with custom hooks (`useStreamingChat`, `useUIState`) for clean, testable code
-- **📝 Streaming Markdown**: Vercel's Streamdown library with syntax highlighting, KaTeX math, citation formatting, and safe paragraph rendering for images
+- **🔍 Triple Hybrid RAG**: Dense + Sparse + ColBERT retrieval with RRF for extreme precision across chat-scoped documents and live web search.
+- **🧠 Thinking & Vision**: Real-time reasoning streams with native multimodal support; analyze uploaded images or let the agent generate visualizations.
+- **🤖 Parallel Orchestration**: LangGraph-powered multi-agent workflow with concurrent tool execution (~3x speedup) and iterative critic refinement.
+- **📊 60fps Streaming UX**: Lag-free SSE architecture with frame-based buffering and segmented markdown rendering (memoized for 10k+ char reports).
+- **🏷️ Contextual Memory**: Persistent episodic context with smart auto-titling and comprehensive cascade cleanup on deletion.
+- **🔐 Secure & Modern**: Built with Next.js 16, Google OAuth (Supabase), and Zustand for robust state management.
 
 ## Tech Stack
 

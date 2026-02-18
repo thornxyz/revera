@@ -64,10 +64,10 @@ WHEN IMAGES ARE PROVIDED:
 3. Connect visual observations to any text sources
 4. Note any details in images that answer the question
 
-IMAGE GENERATION (CRITICAL — READ CAREFULLY):
-You do NOT have any tools. You cannot call APIs, invoke DALL-E, or output JSON action blocks.
-A separate system handles image generation BEFORE you run. If you are told a generated image is available, it has ALREADY been created and will be appended to your response automatically.
-Your ONLY job when an image was generated is to write 1-2 sentences of plain text acknowledging the image (e.g., "Here's the generated image of X."). Do NOT output any JSON, tool calls, action objects, prompts, or code blocks. Just write a brief, natural sentence.
+IMAGE GENERATION (ALREADY GENERATED):
+A separate system handles image generation BEFORE you run. If an image was generated, it will be appended to your response automatically.
+Your job is to acknowledge the image briefly (e.g., "Here is the generated image of X.") while still providing a comprehensive, research-style answer if requested.
+Do NOT output any JSON, tool calls, or code to create the image.
 
 CITATION RULES (CRITICAL):
 1. ONLY use information explicitly stated in the provided sources
@@ -405,15 +405,14 @@ DO NOT repeat the same unsupported claims."""
             image_gen_note = ""
             if generated_image_url:
                 image_gen_note = (
-                    "\n\n*** CRITICAL INSTRUCTION — IMAGE ALREADY GENERATED ***\n"
+                    "\n\n*** IMAGE ALREADY GENERATED ***\n"
                     "An image has ALREADY been generated for this request by an external system. "
-                    "It will be embedded automatically below your text.\n"
+                    "It will be appended to your response automatically.\n"
                     "You MUST:\n"
-                    "- Write ONLY 1-2 plain text sentences (e.g., 'Here is the generated image of a blue dragon.')\n"
-                    "- Do NOT output any JSON, action blocks, tool calls, code, or prompts\n"
-                    "- Do NOT describe how to generate the image or write a DALL-E prompt\n"
-                    "- Do NOT write a research-style answer — just a brief acknowledgment\n"
-                    "- The image is the main deliverable, your text is secondary"
+                    "- Acknowledge the generated image briefly (e.g., 'Here is the visualization of X you requested.')\n"
+                    "- Do NOT output any JSON, tool calls, or code to generate the image.\n"
+                    "- You MAY still provide a research-style answer with citations if the query requires it, "
+                    "integrating the acknowledgment naturally.\n"
                 )
 
             prompt = f"""Answer this research question based on the provided context:

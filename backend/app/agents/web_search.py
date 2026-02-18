@@ -367,8 +367,7 @@ class WebSearchAgent(BaseAgent):
             return sources, tavily_answer
 
         except Exception as e:
-            # Log the error but don't crash
-            print(f"Tavily search error: {e}")
+            logger.error(f"[WEB_SEARCH] Tavily search error: {e}")
             return [], None
 
     async def search_with_context(

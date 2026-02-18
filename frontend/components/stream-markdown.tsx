@@ -1,9 +1,8 @@
-"use client";
-
 import { Streamdown } from "streamdown";
 import { code } from "@streamdown/code";
 import { math } from "@streamdown/math";
-import { useMemo } from "react";
+import { useMemo, memo } from "react";
+import { splitMarkdown } from "@/lib/markdown-utils";
 
 // Import KaTeX styles for math rendering
 import "katex/dist/katex.min.css";
@@ -16,6 +15,26 @@ interface StreamMarkdownProps {
 }
 
 /**
+ * A memoized block of finalized markdown.
+ * Prevents expensive re-renders during the streaming of later content.
+ */
+const StableBlock = memo(function StableBlock({ content, className }: { content: string; className?: string }) {
+    if (!content) return null;
+
+    // Static markdown rendering for stable content
+    return (
+        <Streamdown
+            plugins={{ code, math }}
+            components={{ p: SafeParagraph }}
+            isAnimating={false}
+            className={className}
+        >
+            {content}
+        </Streamdown>
+    );
+});
+
+/**
  * HAST node type passed by Streamdown via the `node` prop.
  */
 interface HastNode {
@@ -26,8 +45,6 @@ interface HastNode {
 
 /**
  * Recursively checks if a HAST node tree contains an <img> element.
- * Streamdown wraps images in <div> wrappers, so if a <p> contains an
- * image the resulting HTML would be <p><div>...</div></p> which is invalid.
  */
 function hastContainsImage(node: HastNode): boolean {
     if (node.tagName === "img") return true;
@@ -36,8 +53,6 @@ function hastContainsImage(node: HastNode): boolean {
 
 /**
  * Custom paragraph component that avoids the <div> inside <p> hydration error.
- * Streamdown passes a HAST `node` prop to component overrides. We inspect it
- * to detect images and render a <div> instead of <p> when needed.
  */
 function SafeParagraph({ node, ...rest }: React.HTMLAttributes<HTMLParagraphElement> & { node?: HastNode }) {
     if (node && hastContainsImage(node)) {
@@ -47,30 +62,17 @@ function SafeParagraph({ node, ...rest }: React.HTMLAttributes<HTMLParagraphElem
 }
 
 /**
- * Markdown renderer optimized for AI streaming responses.
- * 
- * Uses Vercel's streamdown library which handles:
- * - Incomplete markdown during streaming (unclosed tags, etc.)
- * - Syntax highlighting for code blocks via @streamdown/code plugin
- * - LaTeX math rendering via @streamdown/math plugin (KaTeX)
- * - GFM support (tables, task lists, strikethrough)
- * - Security hardening for untrusted content
- * 
- * Also converts [Source N] citations to styled superscript elements.
+ * StreamMarkdown component optimized for long streaming responses.
+ * Uses a segmented rendering strategy to avoid UI lag.
  */
 export function StreamMarkdown({
     content,
     isStreaming = false,
     className = "",
-    onCitationClick
 }: StreamMarkdownProps) {
-    // Preprocess content to convert [Source N] to markdown superscript
-    // This converts [Source 1] to <sup>[1]</sup> style rendering
+    // 1. Process citations (global pre-processing)
     const processedContent = useMemo(() => {
-        if (!content) return content;
-
-        // Replace [Source N] or [Source N, M, ...] patterns with superscript markdown
-        // We'll use HTML since streamdown supports it
+        if (!content) return "";
         return content.replace(
             /\[Source\s*(\d+(?:\s*,\s*\d+)*)\]/gi,
             (_, nums: string) => {
@@ -79,6 +81,12 @@ export function StreamMarkdown({
             }
         );
     }, [content]);
+
+    // 2. Segment content if it's long and streaming
+    const { stable, active } = useMemo(() => {
+        if (!isStreaming) return { stable: "", active: processedContent };
+        return splitMarkdown(processedContent, 3000);
+    }, [processedContent, isStreaming]);
 
     return (
         <div className={`streamdown-content prose prose-slate prose-sm max-w-none ${className}`}>
@@ -118,21 +126,24 @@ export function StreamMarkdown({
                     overflow-x: auto;
                 }
             `}</style>
-            <Streamdown
-                plugins={{
-                    code: code,
-                    math: math,
-                }}
-                components={{
-                    p: SafeParagraph,
-                }}
-                isAnimating={isStreaming}
-                className="leading-relaxed text-slate-700"
-            >
-                {processedContent}
-            </Streamdown>
+
+            {/* Render the stable (finalized) part with heavy memoization */}
+            {stable && <StableBlock content={stable} className="mb-0" />}
+
+            {/* Render the active (currently streaming) tail */}
+            {active && (
+                <Streamdown
+                    plugins={{ code, math }}
+                    components={{ p: SafeParagraph }}
+                    isAnimating={isStreaming}
+                    className="leading-relaxed text-slate-700"
+                >
+                    {active}
+                </Streamdown>
+            )}
+
             {isStreaming && (
-                <span className="inline-block w-2 h-5 bg-emerald-500 animate-pulse ml-0.5 rounded-sm" />
+                <span className="inline-block w-1.5 h-4.5 bg-emerald-500 animate-pulse ml-0.5 rounded-sm align-middle" />
             )}
         </div>
     );

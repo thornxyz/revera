@@ -4,6 +4,7 @@ import asyncio
 import logging
 from google import genai
 from google.genai import types
+from google.genai import errors as gemini_errors
 
 from app.core.config import (
     get_settings,
@@ -11,6 +12,11 @@ from app.core.config import (
     GEMINI_MODEL,
     GEMINI_IMAGE_MODEL,
     GEMINI_THINKING_LEVEL,
+)
+from app.core.exceptions import (
+    GeminiError,
+    GeminiTimeoutError,
+    GeminiRateLimitError,
 )
 
 logger = logging.getLogger(__name__)
@@ -185,9 +191,38 @@ class GeminiClient:
 
             return response_text
 
+        except asyncio.TimeoutError as e:
+            raise GeminiTimeoutError(
+                message="LLM request timed out",
+                details={"timeout_seconds": timeout_seconds or self.default_timeout},
+                retry_after=30,
+            ) from e
+        except gemini_errors.ServerError as e:
+            if "rate" in str(e).lower() or "quota" in str(e).lower():
+                raise GeminiRateLimitError(
+                    message="API rate limit exceeded",
+                    retry_after=60,
+                ) from e
+            raise GeminiError(
+                message=f"Gemini server error: {e}",
+                details={"api_error": str(e)},
+            ) from e
+        except gemini_errors.ClientError as e:
+            raise GeminiError(
+                message=f"Gemini client error: {e}",
+                details={"api_error": str(e)},
+            ) from e
+        except gemini_errors.APIError as e:
+            raise GeminiError(
+                message=f"Gemini API error: {e}",
+                details={"api_error": str(e)},
+            ) from e
         except Exception as e:
             logger.error(f"[Gemini] Error generating JSON response: {e}", exc_info=True)
-            raise
+            raise GeminiError(
+                message=f"Unexpected error generating JSON: {e}",
+                details={"error_type": type(e).__name__},
+            ) from e
 
     async def generate_json_async(
         self,
@@ -254,9 +289,38 @@ class GeminiClient:
 
             return response_text
 
+        except asyncio.TimeoutError as e:
+            raise GeminiTimeoutError(
+                message="LLM async request timed out",
+                details={"timeout_seconds": timeout_seconds or self.default_timeout},
+                retry_after=30,
+            ) from e
+        except gemini_errors.ServerError as e:
+            if "rate" in str(e).lower() or "quota" in str(e).lower():
+                raise GeminiRateLimitError(
+                    message="API rate limit exceeded",
+                    retry_after=60,
+                ) from e
+            raise GeminiError(
+                message=f"Gemini server error: {e}",
+                details={"api_error": str(e)},
+            ) from e
+        except gemini_errors.ClientError as e:
+            raise GeminiError(
+                message=f"Gemini client error: {e}",
+                details={"api_error": str(e)},
+            ) from e
+        except gemini_errors.APIError as e:
+            raise GeminiError(
+                message=f"Gemini API error: {e}",
+                details={"api_error": str(e)},
+            ) from e
         except Exception as e:
             logger.error(f"[Gemini] Error generating JSON response: {e}", exc_info=True)
-            raise
+            raise GeminiError(
+                message=f"Unexpected error generating JSON: {e}",
+                details={"error_type": type(e).__name__},
+            ) from e
 
     async def generate_stream(
         self,
@@ -335,9 +399,37 @@ class GeminiClient:
 
             logger.info("[Gemini] Stream complete")
 
+        except asyncio.TimeoutError as e:
+            raise GeminiTimeoutError(
+                message="LLM stream request timed out",
+                retry_after=30,
+            ) from e
+        except gemini_errors.ServerError as e:
+            if "rate" in str(e).lower() or "quota" in str(e).lower():
+                raise GeminiRateLimitError(
+                    message="API rate limit exceeded during streaming",
+                    retry_after=60,
+                ) from e
+            raise GeminiError(
+                message=f"Gemini API error during streaming: {e}",
+                details={"api_error": str(e)},
+            ) from e
+        except gemini_errors.ClientError as e:
+            raise GeminiError(
+                message=f"Gemini client error during streaming: {e}",
+                details={"api_error": str(e)},
+            ) from e
+        except gemini_errors.APIError as e:
+            raise GeminiError(
+                message=f"Gemini API error during streaming: {e}",
+                details={"api_error": str(e)},
+            ) from e
         except Exception as e:
             logger.error(f"[Gemini] Error in streaming generation: {e}", exc_info=True)
-            raise
+            raise GeminiError(
+                message=f"Unexpected error during streaming: {e}",
+                details={"error_type": type(e).__name__},
+            ) from e
 
     # =========================================
     # Multimodal (Image) Methods
@@ -405,11 +497,39 @@ Be thorough but factual - only describe what you can see."""
             )
             return description
 
+        except asyncio.TimeoutError as e:
+            raise GeminiTimeoutError(
+                message="Image description request timed out",
+                retry_after=30,
+            ) from e
+        except gemini_errors.ServerError as e:
+            if "rate" in str(e).lower() or "quota" in str(e).lower():
+                raise GeminiRateLimitError(
+                    message="API rate limit exceeded for image description",
+                    retry_after=60,
+                ) from e
+            raise GeminiError(
+                message=f"Gemini API error generating image description: {e}",
+                details={"api_error": str(e)},
+            ) from e
+        except gemini_errors.ClientError as e:
+            raise GeminiError(
+                message=f"Gemini client error generating image description: {e}",
+                details={"api_error": str(e)},
+            ) from e
+        except gemini_errors.APIError as e:
+            raise GeminiError(
+                message=f"Gemini API error generating image description: {e}",
+                details={"api_error": str(e)},
+            ) from e
         except Exception as e:
             logger.error(
                 f"[Gemini] Error generating image description: {e}", exc_info=True
             )
-            raise
+            raise GeminiError(
+                message=f"Unexpected error generating image description: {e}",
+                details={"error_type": type(e).__name__},
+            ) from e
 
     async def generate_with_images(
         self,
@@ -460,9 +580,37 @@ Be thorough but factual - only describe what you can see."""
 
             return response.text or ""
 
+        except asyncio.TimeoutError as e:
+            raise GeminiTimeoutError(
+                message="Multimodal generation request timed out",
+                retry_after=30,
+            ) from e
+        except gemini_errors.ServerError as e:
+            if "rate" in str(e).lower() or "quota" in str(e).lower():
+                raise GeminiRateLimitError(
+                    message="API rate limit exceeded during multimodal generation",
+                    retry_after=60,
+                ) from e
+            raise GeminiError(
+                message=f"Gemini API error during multimodal generation: {e}",
+                details={"api_error": str(e)},
+            ) from e
+        except gemini_errors.ClientError as e:
+            raise GeminiError(
+                message=f"Gemini client error during multimodal generation: {e}",
+                details={"api_error": str(e)},
+            ) from e
+        except gemini_errors.APIError as e:
+            raise GeminiError(
+                message=f"Gemini API error during multimodal generation: {e}",
+                details={"api_error": str(e)},
+            ) from e
         except Exception as e:
             logger.error(f"[Gemini] Error in multimodal generation: {e}", exc_info=True)
-            raise
+            raise GeminiError(
+                message=f"Unexpected error during multimodal generation: {e}",
+                details={"error_type": type(e).__name__},
+            ) from e
 
     async def generate_stream_with_images(
         self,
@@ -540,9 +688,37 @@ Be thorough but factual - only describe what you can see."""
 
             logger.info("[Gemini] Multimodal stream complete")
 
+        except asyncio.TimeoutError as e:
+            raise GeminiTimeoutError(
+                message="Multimodal stream request timed out",
+                retry_after=30,
+            ) from e
+        except gemini_errors.ServerError as e:
+            if "rate" in str(e).lower() or "quota" in str(e).lower():
+                raise GeminiRateLimitError(
+                    message="API rate limit exceeded during multimodal streaming",
+                    retry_after=60,
+                ) from e
+            raise GeminiError(
+                message=f"Gemini API error during multimodal streaming: {e}",
+                details={"api_error": str(e)},
+            ) from e
+        except gemini_errors.ClientError as e:
+            raise GeminiError(
+                message=f"Gemini client error during multimodal streaming: {e}",
+                details={"api_error": str(e)},
+            ) from e
+        except gemini_errors.APIError as e:
+            raise GeminiError(
+                message=f"Gemini API error during multimodal streaming: {e}",
+                details={"api_error": str(e)},
+            ) from e
         except Exception as e:
             logger.error(f"[Gemini] Error in multimodal streaming: {e}", exc_info=True)
-            raise
+            raise GeminiError(
+                message=f"Unexpected error during multimodal streaming: {e}",
+                details={"error_type": type(e).__name__},
+            ) from e
 
     # =========================================
     # Image Generation (Text-to-Image)
@@ -607,9 +783,37 @@ Be thorough but factual - only describe what you can see."""
             )
             return image_bytes_list
 
+        except asyncio.TimeoutError as e:
+            raise GeminiTimeoutError(
+                message="Image generation request timed out",
+                retry_after=30,
+            ) from e
+        except gemini_errors.ServerError as e:
+            if "rate" in str(e).lower() or "quota" in str(e).lower():
+                raise GeminiRateLimitError(
+                    message="API rate limit exceeded for image generation",
+                    retry_after=60,
+                ) from e
+            raise GeminiError(
+                message=f"Gemini API error during image generation: {e}",
+                details={"api_error": str(e)},
+            ) from e
+        except gemini_errors.ClientError as e:
+            raise GeminiError(
+                message=f"Gemini client error during image generation: {e}",
+                details={"api_error": str(e)},
+            ) from e
+        except gemini_errors.APIError as e:
+            raise GeminiError(
+                message=f"Gemini API error during image generation: {e}",
+                details={"api_error": str(e)},
+            ) from e
         except Exception as e:
             logger.error(f"[Gemini] Error generating image: {e}", exc_info=True)
-            raise
+            raise GeminiError(
+                message=f"Unexpected error during image generation: {e}",
+                details={"error_type": type(e).__name__},
+            ) from e
 
 
 # Singleton instance

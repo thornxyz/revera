@@ -387,23 +387,30 @@ class Orchestrator:
 
             self._log_agent_timeline(session_id, agent_timeline)
 
-            # Update chat title based on query
+            # Update chat title if it's new or Untitled
             from app.services.title_generator import generate_title_from_query
 
             try:
-                new_title = generate_title_from_query(query)
-                logger.info(f"[ORCH] Updating chat {chat_id} title to: {new_title}")
+                # Get current title to see if we should update it
+                chat_data = self.supabase.table("chats").select("title").eq("id", str(chat_id)).single().execute()
+                current_title = chat_data.data.get("title") if chat_data.data else None
 
-                self.supabase.table("chats").update({"title": new_title}).eq(
-                    "id", str(chat_id)
-                ).execute()
-                logger.info("[ORCH] Chat title updated successfully")
+                if not current_title or current_title in ["New Chat", "Untitled Document", "Untitled"]:
+                    new_title = generate_title_from_query(query)
+                    logger.info(f"[ORCH] Updating chat {chat_id} title from '{current_title}' to: {new_title}")
 
-                yield {
-                    "type": "title_updated",
-                    "title": new_title,
-                    "chat_id": str(chat_id),
-                }
+                    self.supabase.table("chats").update({"title": new_title}).eq(
+                        "id", str(chat_id)
+                    ).execute()
+                    logger.info("[ORCH] Chat title updated successfully")
+
+                    yield {
+                        "type": "title_updated",
+                        "title": new_title,
+                        "chat_id": str(chat_id),
+                    }
+                else:
+                    logger.debug(f"[ORCH] Skipping title update for chat {chat_id}, current title: '{current_title}'")
             except Exception as title_err:
                 logger.error(f"[ORCH] Failed to update chat title: {title_err}")
 

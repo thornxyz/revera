@@ -96,6 +96,33 @@ export function useStreamingChat() {
         streamStartTimeRef.current = new Date();
         activityLogCounterRef.current = 0;
 
+        // --- Frame-based update buffering ---
+        // Buffers incoming characters and flushes them on the next animation frame
+        // to prevent React state update waterfalls on every tiny chunk.
+        let answerBuffer = "";
+        let thoughtsBuffer = "";
+        let animationFrameId: number | null = null;
+
+        const flushBuffers = () => {
+            if (answerBuffer) {
+                const chunk = answerBuffer;
+                answerBuffer = "";
+                setStreamingAnswer((prev) => prev + chunk);
+            }
+            if (thoughtsBuffer) {
+                const chunk = thoughtsBuffer;
+                thoughtsBuffer = "";
+                setStreamingThoughts((prev) => prev + chunk);
+            }
+            animationFrameId = null;
+        };
+
+        const scheduleFlush = () => {
+            if (animationFrameId === null) {
+                animationFrameId = requestAnimationFrame(flushBuffers);
+            }
+        };
+
         try {
             await sendChatMessageStream(
                 chatId,
@@ -121,11 +148,21 @@ export function useStreamingChat() {
                             setCurrentAgent(node);
                         }
                     },
-                    onAnswerChunk: (content) => setStreamingAnswer((prev) => prev + content),
-                    onThoughtChunk: (content) => setStreamingThoughts((prev) => prev + content),
+                    onAnswerChunk: (content) => {
+                        answerBuffer += content;
+                        scheduleFlush();
+                    },
+                    onThoughtChunk: (content) => {
+                        thoughtsBuffer += content;
+                        scheduleFlush();
+                    },
                     onSources: (sources) => setStreamingSources((prev) => [...prev, ...sources]),
                     onTitleUpdated: (title, updatedChatId) => updateChatTitle(updatedChatId, title),
                     onComplete: async (data) => {
+                        // Ensure final chunks are flushed before completion
+                        if (animationFrameId) cancelAnimationFrame(animationFrameId);
+                        flushBuffers();
+
                         // Fetch messages first (async), then apply all state
                         // changes synchronously so React can batch them into
                         // a single render pass.
@@ -137,12 +174,11 @@ export function useStreamingChat() {
                         }
 
                         // Apply state changes synchronously — React 18 batches
-                        // these into one render, preventing the scroll jump
-                        // that occurred when streaming UI unmounted separately.
+                        // these into one render.
                         resetStreamingState();
                         if (fetchedMessages) setMessages(fetchedMessages);
 
-                        // Refresh sidebar chat list (message count, preview, etc.)
+                        // Refresh sidebar chat list
                         try {
                             const updatedChats = await listChats();
                             setChats(updatedChats);
@@ -170,6 +206,7 @@ export function useStreamingChat() {
                         }
                     },
                     onError: (message) => {
+                        if (animationFrameId) cancelAnimationFrame(animationFrameId);
                         setError(message);
                         resetStreamingState();
                         toast.error("Research failed", { description: message });
@@ -177,6 +214,7 @@ export function useStreamingChat() {
                 }
             );
         } catch (err) {
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
             const errorMessage = err instanceof Error ? err.message : "Research failed";
             setError(errorMessage);
             resetStreamingState();

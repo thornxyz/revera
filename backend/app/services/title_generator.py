@@ -128,7 +128,12 @@ Rest Api Fastapi Implementation"""
             "with",
         }
         words = [w for w in cleaned.split() if w.lower() not in stop_words]
-        title = " ".join(words[:max_words]) if words else cleaned.split()[0]
+        if words:
+            title = " ".join(words[:max_words])
+        elif cleaned.split():
+            title = cleaned.split()[0]
+        else:
+            title = "New Chat"
 
     # Ensure title case
     title = " ".join(word.capitalize() for word in title.split())

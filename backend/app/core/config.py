@@ -42,7 +42,8 @@ class Settings(BaseSettings):
     # Server Configuration
     cors_origins: str = "http://localhost:3000"
     critic_timeout_seconds: int = 30
-    log_format: str = "text"  # "text" or "json"
+    log_format: str = "text"  # "text" for dev, "json" for production
+    log_level: str = "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
 
     # File Upload Limits
     max_file_size_mb: int = 50  # For PDFs
