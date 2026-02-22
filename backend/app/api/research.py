@@ -1,6 +1,7 @@
 """Research API routes."""
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -53,15 +54,21 @@ async def get_session_timeline(
         .execute()
     )
 
+    # Build timeline from logs data
+    timeline = []
+    if logs.data:
+        for log in logs.data:
+            if isinstance(log, dict):
+                timeline.append(
+                    {
+                        "agent": log.get("agent_name"),
+                        "events": log.get("events"),
+                        "latency_ms": log.get("latency_ms"),
+                        "timestamp": log.get("created_at"),
+                    }
+                )
+
     return AgentTimelineResponse(
         session_id=session_id,
-        timeline=[
-            {
-                "agent": log["agent_name"],
-                "events": log["events"],
-                "latency_ms": log["latency_ms"],
-                "timestamp": log["created_at"],
-            }
-            for log in logs.data
-        ],
+        timeline=timeline,
     )

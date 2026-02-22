@@ -2,6 +2,7 @@
 
 import logging
 import time
+from collections.abc import AsyncGenerator
 from uuid import uuid4, UUID
 from dataclasses import dataclass
 
@@ -106,7 +107,7 @@ class Orchestrator:
         use_web: bool = True,
         document_ids: list[str] | None = None,
         max_iterations: int = 2,
-    ):
+    ) -> AsyncGenerator[dict, None]:
         """
         Execute research with chat context and streaming updates.
 
@@ -392,12 +393,28 @@ class Orchestrator:
 
             try:
                 # Get current title to see if we should update it
-                chat_data = self.supabase.table("chats").select("title").eq("id", str(chat_id)).single().execute()
-                current_title = chat_data.data.get("title") if chat_data.data else None
+                chat_data = (
+                    self.supabase.table("chats")
+                    .select("title")
+                    .eq("id", str(chat_id))
+                    .single()
+                    .execute()
+                )
+                current_title = (
+                    chat_data.data.get("title")
+                    if chat_data.data and isinstance(chat_data.data, dict)
+                    else None
+                )
 
-                if not current_title or current_title in ["New Chat", "Untitled Document", "Untitled"]:
+                if not current_title or current_title in [
+                    "New Chat",
+                    "Untitled Document",
+                    "Untitled",
+                ]:
                     new_title = generate_title_from_query(query)
-                    logger.info(f"[ORCH] Updating chat {chat_id} title from '{current_title}' to: {new_title}")
+                    logger.info(
+                        f"[ORCH] Updating chat {chat_id} title from '{current_title}' to: {new_title}"
+                    )
 
                     self.supabase.table("chats").update({"title": new_title}).eq(
                         "id", str(chat_id)
@@ -410,7 +427,9 @@ class Orchestrator:
                         "chat_id": str(chat_id),
                     }
                 else:
-                    logger.debug(f"[ORCH] Skipping title update for chat {chat_id}, current title: '{current_title}'")
+                    logger.debug(
+                        f"[ORCH] Skipping title update for chat {chat_id}, current title: '{current_title}'"
+                    )
             except Exception as title_err:
                 logger.error(f"[ORCH] Failed to update chat title: {title_err}")
 

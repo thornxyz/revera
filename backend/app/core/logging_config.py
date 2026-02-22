@@ -19,7 +19,7 @@ import json
 import logging
 import sys
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 
 class TextFormatter(logging.Formatter):
@@ -200,7 +200,7 @@ class LogContext:
     def __init__(self, logger: logging.Logger, **context: Any):
         self.logger = logger
         self.context = context
-        self.old_factory = None
+        self.old_factory: Callable[..., logging.LogRecord] | None = None
 
     def __enter__(self):
         old_factory = logging.getLogRecordFactory()
@@ -216,7 +216,8 @@ class LogContext:
         return self
 
     def __exit__(self, *args):
-        logging.setLogRecordFactory(self.old_factory)
+        if self.old_factory is not None:
+            logging.setLogRecordFactory(self.old_factory)
 
 
 def log_error(

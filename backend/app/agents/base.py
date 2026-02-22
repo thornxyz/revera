@@ -90,6 +90,7 @@ class BaseAgent(ABC):
 
         original_response = response
         response_preview = response[:500] + ("..." if len(response) > 500 else "")
+        last_error: Exception | None = None
 
         # Strategy 1: Direct parse
         try:
@@ -97,6 +98,7 @@ class BaseAgent(ABC):
             logger.debug(f"[{self.name}] JSON parsed successfully (direct)")
             return result
         except json.JSONDecodeError as e:
+            last_error = e
             logger.debug(f"[{self.name}] Direct parse failed: {e}")
 
         # Strategy 2: Extract from markdown code blocks
@@ -122,6 +124,7 @@ class BaseAgent(ABC):
                     )
                     return result
         except json.JSONDecodeError as e:
+            last_error = e
             logger.debug(f"[{self.name}] Markdown extraction failed: {e}")
 
         # Strategy 3: Strip whitespace, BOM, and invisible characters
@@ -132,6 +135,7 @@ class BaseAgent(ABC):
             logger.debug(f"[{self.name}] JSON parsed successfully (cleaned)")
             return result
         except json.JSONDecodeError as e:
+            last_error = e
             logger.debug(f"[{self.name}] Cleaned parse failed: {e}")
 
         # Strategy 4: Extract JSON object from mixed content using regex
@@ -150,6 +154,7 @@ class BaseAgent(ABC):
                 except json.JSONDecodeError:
                     continue
         except Exception as e:
+            last_error = e
             logger.debug(f"[{self.name}] Regex extraction failed: {e}")
 
         # Strategy 5: Repair common JSON issues
@@ -189,6 +194,7 @@ class BaseAgent(ABC):
             )
             return result
         except json.JSONDecodeError as e:
+            last_error = e
             logger.debug(f"[{self.name}] Repair strategy failed: {e}")
 
         # All strategies failed - log detailed error and raise
@@ -196,7 +202,7 @@ class BaseAgent(ABC):
             f"[{self.name}] All JSON parsing strategies failed.\n"
             f"Response length: {len(original_response)}\n"
             f"Response preview: {response_preview}\n"
-            f"Last error: {e}"
+            f"Last error: {last_error}"
         )
 
         # Re-raise the original error with context

@@ -1,10 +1,11 @@
 """LangGraph Store configuration for long-term agent memory."""
 
 import logging
+from collections.abc import Sequence
 from functools import lru_cache
 from typing import Callable
 
-from langgraph.store.base import BaseStore
+from langgraph.store.base import BaseStore, IndexConfig
 from langgraph.store.memory import InMemoryStore
 
 from app.llm.gemini import get_gemini_client
@@ -12,7 +13,7 @@ from app.llm.gemini import get_gemini_client
 logger = logging.getLogger(__name__)
 
 
-def get_embedding_function() -> Callable[[list[str]], list[list[float]]]:
+def get_embedding_function() -> Callable[[Sequence[str]], list[list[float]]]:
     """
     Create embedding function for semantic search in Store.
 
@@ -20,7 +21,7 @@ def get_embedding_function() -> Callable[[list[str]], list[list[float]]]:
     """
     client = get_gemini_client()
 
-    def embed(texts: list[str]) -> list[list[float]]:
+    def embed(texts: Sequence[str]) -> list[list[float]]:
         """Embed texts using Gemini embedding model."""
         if not texts:
             return []
@@ -58,8 +59,8 @@ def get_memory_store() -> BaseStore:
     )
 
     return InMemoryStore(
-        index={
-            "embed": get_embedding_function(),
-            "dims": 3072,  # Gemini embedding-001 outputs 3072-dimensional vectors
-        }
+        index=IndexConfig(
+            embed=get_embedding_function(),
+            dims=3072,  # Gemini embedding-001 outputs 3072-dimensional vectors
+        )
     )

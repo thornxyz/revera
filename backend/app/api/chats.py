@@ -3,6 +3,7 @@
 import json
 import logging
 import uuid
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -68,7 +69,7 @@ async def list_chats(
             "get_chats_with_preview", {"p_user_id": user_id}
         ).execute()
 
-        if not response.data:
+        if not response.data or not isinstance(response.data, list):
             logger.info(f"[CHATS] No chats found for user_id={user_id}")
             return []
 
@@ -77,19 +78,33 @@ async def list_chats(
         )
 
         # Map database response to Pydantic model
-        result = [
-            ChatWithPreview(
-                id=chat["id"],
-                user_id=chat["user_id"],
-                title=chat.get("title"),
-                thread_id=chat.get("thread_id"),
-                created_at=chat["created_at"],
-                updated_at=chat["updated_at"],
-                last_message_preview=chat.get("last_message_preview"),
-                message_count=chat.get("message_count", 0),
-            )
-            for chat in response.data
-        ]
+        result = []
+        for chat in response.data:
+            if isinstance(chat, dict):
+                result.append(
+                    ChatWithPreview(
+                        id=UUID(str(chat["id"])),
+                        user_id=UUID(str(chat["user_id"])),
+                        title=str(chat.get("title")) if chat.get("title") else None,
+                        thread_id=(
+                            str(chat.get("thread_id"))
+                            if chat.get("thread_id")
+                            else None
+                        ),
+                        created_at=datetime.fromisoformat(
+                            str(chat["created_at"]).replace("Z", "+00:00")
+                        ),
+                        updated_at=datetime.fromisoformat(
+                            str(chat["updated_at"]).replace("Z", "+00:00")
+                        ),
+                        last_message_preview=(
+                            str(chat.get("last_message_preview"))
+                            if chat.get("last_message_preview")
+                            else None
+                        ),
+                        message_count=int(str(chat.get("message_count", 0))),
+                    )
+                )
 
         return result
 
@@ -133,20 +148,36 @@ async def create_chat(
 
         response = supabase.table("chats").insert(new_chat).execute()
 
-        if not response.data:
+        if (
+            not response.data
+            or not isinstance(response.data, list)
+            or len(response.data) == 0
+        ):
             logger.error("[CHATS] Failed to create chat: No data returned from insert")
             raise HTTPException(status_code=500, detail="Failed to create chat")
 
         created_chat = response.data[0]
+        if not isinstance(created_chat, dict):
+            logger.error("[CHATS] Failed to create chat: Invalid response format")
+            raise HTTPException(status_code=500, detail="Failed to create chat")
+
         logger.info(f"[CHATS] Successfully created chat_id={created_chat['id']}")
 
         return Chat(
-            id=created_chat["id"],
-            user_id=created_chat["user_id"],
-            title=created_chat.get("title"),
-            thread_id=created_chat.get("thread_id"),
-            created_at=created_chat["created_at"],
-            updated_at=created_chat["updated_at"],
+            id=UUID(str(created_chat["id"])),
+            user_id=UUID(str(created_chat["user_id"])),
+            title=str(created_chat.get("title")) if created_chat.get("title") else None,
+            thread_id=(
+                str(created_chat.get("thread_id"))
+                if created_chat.get("thread_id")
+                else None
+            ),
+            created_at=datetime.fromisoformat(
+                str(created_chat["created_at"]).replace("Z", "+00:00")
+            ),
+            updated_at=datetime.fromisoformat(
+                str(created_chat["updated_at"]).replace("Z", "+00:00")
+            ),
         )
 
     except HTTPException:
@@ -179,7 +210,7 @@ async def get_chat(
             .execute()
         )
 
-        if not response.data:
+        if not response.data or not isinstance(response.data, dict):
             logger.warning(
                 f"[CHATS] Chat not found: chat_id={chat_id}, user_id={user_id}"
             )
@@ -187,16 +218,20 @@ async def get_chat(
 
         chat = response.data
         logger.info(
-            f"[CHATS] Successfully retrieved chat_id={chat_id}, title={chat.get('title')}"
+            f"[CHATS] Successfully retrieved chat_id={chat_id}, title={chat.get('title') if isinstance(chat, dict) else None}"
         )
 
         return Chat(
-            id=chat["id"],
-            user_id=chat["user_id"],
-            title=chat.get("title"),
-            thread_id=chat.get("thread_id"),
-            created_at=chat["created_at"],
-            updated_at=chat["updated_at"],
+            id=UUID(str(chat["id"])),
+            user_id=UUID(str(chat["user_id"])),
+            title=str(chat.get("title")) if chat.get("title") else None,
+            thread_id=str(chat.get("thread_id")) if chat.get("thread_id") else None,
+            created_at=datetime.fromisoformat(
+                str(chat["created_at"]).replace("Z", "+00:00")
+            ),
+            updated_at=datetime.fromisoformat(
+                str(chat["updated_at"]).replace("Z", "+00:00")
+            ),
         )
 
     except HTTPException:
@@ -237,18 +272,28 @@ async def update_chat(
         .execute()
     )
 
-    if not response.data:
+    if (
+        not response.data
+        or not isinstance(response.data, list)
+        or len(response.data) == 0
+    ):
         raise HTTPException(status_code=500, detail="Failed to update chat")
 
     updated = response.data[0]
+    if not isinstance(updated, dict):
+        raise HTTPException(status_code=500, detail="Failed to update chat")
 
     return Chat(
-        id=updated["id"],
-        user_id=updated["user_id"],
-        title=updated.get("title"),
-        thread_id=updated.get("thread_id"),
-        created_at=updated["created_at"],
-        updated_at=updated["updated_at"],
+        id=UUID(str(updated["id"])),
+        user_id=UUID(str(updated["user_id"])),
+        title=str(updated.get("title")) if updated.get("title") else None,
+        thread_id=str(updated.get("thread_id")) if updated.get("thread_id") else None,
+        created_at=datetime.fromisoformat(
+            str(updated["created_at"]).replace("Z", "+00:00")
+        ),
+        updated_at=datetime.fromisoformat(
+            str(updated["updated_at"]).replace("Z", "+00:00")
+        ),
     )
 
 
@@ -320,26 +365,56 @@ async def get_chat_messages(
         .execute()
     )
 
-    if not messages_response.data:
+    if not messages_response.data or not isinstance(messages_response.data, list):
         return []
 
-    return [
-        Message(
-            id=msg["id"],
-            chat_id=msg["chat_id"],
-            session_id=msg.get("session_id"),
-            query=msg["query"],
-            answer=msg.get("answer"),
-            role=msg["role"],
-            sources=msg.get("sources", []),
-            verification=msg.get("verification"),
-            confidence=msg.get("confidence"),
-            thinking=msg.get("thinking"),
-            agent_timeline=msg.get("agent_timeline"),
-            created_at=msg["created_at"],
-        )
-        for msg in messages_response.data
-    ]
+    messages = []
+    for msg in messages_response.data:
+        if isinstance(msg, dict):
+            # Convert sources to list[dict] if it's a valid JSON
+            sources_val = msg.get("sources", [])
+            sources_list: list[dict] = []
+            if isinstance(sources_val, list):
+                sources_list = [s for s in sources_val if isinstance(s, dict)]
+
+            # Convert verification to dict if present
+            verification_val = msg.get("verification")
+            verification_dict = (
+                verification_val if isinstance(verification_val, dict) else None
+            )
+
+            # Convert agent_timeline to list[dict] if present
+            timeline_val = msg.get("agent_timeline")
+            timeline_list: list[dict] | None = None
+            if isinstance(timeline_val, list):
+                timeline_list = [t for t in timeline_val if isinstance(t, dict)]
+
+            messages.append(
+                Message(
+                    id=UUID(str(msg["id"])),
+                    chat_id=UUID(str(msg["chat_id"])),
+                    session_id=(
+                        UUID(str(msg.get("session_id")))
+                        if msg.get("session_id")
+                        else None
+                    ),
+                    query=str(msg["query"]),
+                    answer=str(msg.get("answer")) if msg.get("answer") else None,
+                    role=str(msg["role"]),
+                    sources=sources_list,
+                    verification=verification_dict,
+                    confidence=(
+                        str(msg.get("confidence")) if msg.get("confidence") else None
+                    ),
+                    thinking=str(msg.get("thinking")) if msg.get("thinking") else None,
+                    agent_timeline=timeline_list,
+                    created_at=datetime.fromisoformat(
+                        str(msg["created_at"]).replace("Z", "+00:00")
+                    ),
+                )
+            )
+
+    return messages
 
 
 @router.get("/{chat_id}/messages/{message_id}/verification")
@@ -380,11 +455,11 @@ async def get_message_verification(
         .execute()
     )
 
-    if not message_response.data:
+    if not message_response.data or not isinstance(message_response.data, dict):
         raise HTTPException(status_code=404, detail="Message not found")
 
     message = message_response.data
-    confidence = message.get("confidence", "unknown")
+    confidence = str(message.get("confidence", "unknown"))
 
     # Return 202 if still pending, 200 when complete
     status_code = 202 if confidence == "pending" else 200
@@ -438,14 +513,14 @@ async def send_chat_query_stream(
             .execute()
         )
 
-        if not chat_response.data:
+        if not chat_response.data or not isinstance(chat_response.data, dict):
             logger.warning(
                 f"[CHAT_STREAM] Chat not found: chat_id={chat_id}, user_id={user_id}"
             )
             raise HTTPException(status_code=404, detail="Chat not found")
 
         chat = chat_response.data
-        thread_id = chat.get("thread_id")
+        thread_id = str(chat.get("thread_id")) if chat.get("thread_id") else None
 
         logger.info(f"[CHAT_STREAM] Chat verified: thread_id={thread_id}")
 
@@ -534,14 +609,16 @@ async def send_chat_query_stream(
                                     .order("created_at")
                                     .execute()
                                 )
-                                agent_timeline = [
-                                    {
-                                        "agent": log["agent_name"],
-                                        "latency_ms": log["latency_ms"],
-                                        "events": log["events"],
-                                    }
-                                    for log in timeline_logs.data
-                                ]
+                                if isinstance(timeline_logs.data, list):
+                                    for log in timeline_logs.data:
+                                        if isinstance(log, dict):
+                                            agent_timeline.append(
+                                                {
+                                                    "agent": log.get("agent_name"),
+                                                    "latency_ms": log.get("latency_ms"),
+                                                    "events": log.get("events"),
+                                                }
+                                            )
                             except Exception as e:
                                 logger.error(
                                     f"[CHAT_STREAM] Failed to fetch timeline logs: {e}"

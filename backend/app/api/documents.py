@@ -188,7 +188,7 @@ async def upload_document(
             .execute()
         )
 
-        doc_data = doc.data if doc.data else {}
+        doc_data = doc.data if doc.data and isinstance(doc.data, dict) else {}
         return DocumentResponse(
             id=str(document_id),
             filename=str(doc_data.get("filename", "")),
@@ -232,19 +232,25 @@ async def list_documents(
     result = query.order("created_at", desc=True).execute()
 
     documents_data = result.data or []
-    return DocumentListResponse(
-        documents=[
-            DocumentResponse(
-                id=str(doc.get("id", "")),
-                filename=str(doc.get("filename", "")),
-                type=str(doc.get("type", "pdf")),
-                chat_id=str(doc.get("chat_id")) if doc.get("chat_id") else None,
-                image_url=str(doc.get("image_url")) if doc.get("image_url") else None,
-                created_at=str(doc.get("created_at", "")),
+    documents = []
+    for doc in documents_data:
+        if isinstance(doc, dict):
+            documents.append(
+                DocumentResponse(
+                    id=str(doc.get("id", "")),
+                    filename=str(doc.get("filename", "")),
+                    type=str(doc.get("type", "pdf")),
+                    chat_id=str(doc.get("chat_id")) if doc.get("chat_id") else None,
+                    image_url=(
+                        str(doc.get("image_url")) if doc.get("image_url") else None
+                    ),
+                    created_at=str(doc.get("created_at", "")),
+                )
             )
-            for doc in documents_data
-        ],
-        total=len(documents_data),
+
+    return DocumentListResponse(
+        documents=documents,
+        total=len(documents),
     )
 
 
@@ -271,7 +277,7 @@ async def delete_document(
     if not doc.data:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    doc_type = doc.data.get("type", "pdf")
+    doc_type = doc.data.get("type", "pdf") if isinstance(doc.data, dict) else "pdf"
 
     if doc_type == "image":
         # Delete via image ingestion service

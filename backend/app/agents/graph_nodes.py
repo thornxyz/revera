@@ -339,8 +339,13 @@ async def synthesis_node(state: ResearchState, config: RunnableConfig) -> dict:
 
     # If this is a refinement pass, include critic feedback for improvement
     if is_refinement:
-        verification = state.get("verification", {})
-        previous_answer = state.get("synthesis_result", {}).get("answer", "")
+        verification = state.get("verification") or {}
+        synthesis_result = state.get("synthesis_result") or {}
+        previous_answer = (
+            synthesis_result.get("answer", "")
+            if isinstance(synthesis_result, dict)
+            else ""
+        )
 
         # Build critic feedback for the prompt
         critic_feedback_parts = []
