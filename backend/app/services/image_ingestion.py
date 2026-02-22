@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import uuid
+from functools import lru_cache
 from typing import Any, cast
 from uuid import UUID
 
@@ -41,11 +42,11 @@ class ImageIngestionService:
         # Initialize Local Models (for text description embeddings)
         self.colbert_model = LateInteractionTextEmbedding(
             model_name="colbert-ir/colbertv2.0",
-            cache_dir="./models_cache",
+            cache_dir=self.settings.model_cache_dir,
         )
         self.sparse_model = SparseTextEmbedding(
             model_name="Qdrant/bm25",
-            cache_dir="./models_cache",
+            cache_dir=self.settings.model_cache_dir,
         )
 
     async def ingest_image(
@@ -246,27 +247,9 @@ class ImageIngestionService:
             logger.error(f"[IMAGE_INGEST] Storage upload failed: {e}")
             raise
 
-        # Create a document record so the image is tracked and cleaned up
-        try:
-            doc_data: dict[str, str] = {
-                "user_id": str(user_id),
-                "filename": f"{clean_prompt}.png",
-                "type": "image",
-                "image_url": storage_path,
-            }
-            if chat_id:
-                doc_data["chat_id"] = str(chat_id)
-
-            self.supabase.table("documents").insert(doc_data).execute()
-            logger.info(
-                f"[IMAGE_INGEST] Created document record for generated image "
-                f"(chat_id={chat_id})"
-            )
-        except Exception as e:
-            logger.warning(
-                f"[IMAGE_INGEST] Failed to create document record for generated "
-                f"image, storage object may be orphaned: {e}"
-            )
+        logger.info(
+            f"[IMAGE_INGEST] Generated image saved to storage (chat_id={chat_id})"
+        )
 
         return storage_path
 
@@ -382,13 +365,7 @@ class ImageIngestionService:
         return True
 
 
-# Singleton
-_image_ingestion_service: ImageIngestionService | None = None
-
-
+@lru_cache(maxsize=1)
 def get_image_ingestion_service() -> ImageIngestionService:
-    """Get or create image ingestion service instance."""
-    global _image_ingestion_service
-    if _image_ingestion_service is None:
-        _image_ingestion_service = ImageIngestionService()
-    return _image_ingestion_service
+    """Get or create image ingestion service instance (thread-safe via lru_cache)."""
+    return ImageIngestionService()

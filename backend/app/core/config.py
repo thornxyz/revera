@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     max_file_size_mb: int = 50  # For PDFs
     max_image_size_mb: int = 10  # For images
 
+    # Local model cache directory (fastembed ColBERT / BM25)
+    model_cache_dir: str = "./models_cache"
+
     model_config = SettingsConfigDict(
         env_file=Path(__file__).parent.parent.parent / ".env",
         env_file_encoding="utf-8",

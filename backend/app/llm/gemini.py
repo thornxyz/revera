@@ -2,10 +2,12 @@
 
 import asyncio
 import logging
+from functools import lru_cache
 from google import genai
 from google.genai import types
 from google.genai import errors as gemini_errors
 
+from app.core.circuit_breaker import CircuitBreaker
 from app.core.config import (
     get_settings,
     GEMINI_EMBEDDING_MODEL,
@@ -20,6 +22,13 @@ from app.core.exceptions import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Module-level circuit breaker shared across all GeminiClient instances
+_gemini_breaker = CircuitBreaker(
+    name="gemini",
+    failure_threshold=5,
+    cooldown_seconds=60.0,
+)
 
 
 class GeminiClient:
@@ -86,12 +95,13 @@ class GeminiClient:
 
         for start in range(0, len(texts), batch_size):
             batch = texts[start : start + batch_size]
-            result = await self.client.aio.models.embed_content(
-                model=self.embedding_model,
-                contents=[
-                    types.Content(parts=[types.Part(text=text)]) for text in batch
-                ],
-            )
+            async with _gemini_breaker:
+                result = await self.client.aio.models.embed_content(
+                    model=self.embedding_model,
+                    contents=[
+                        types.Content(parts=[types.Part(text=text)]) for text in batch
+                    ],
+                )
             if result.embeddings is None:
                 continue
             embeddings.extend(
@@ -261,11 +271,12 @@ class GeminiClient:
 
         try:
             # Use async API which properly respects asyncio cancellation
-            response = await self.client.aio.models.generate_content(
-                model=self.model,
-                contents=prompt,
-                config=config,
-            )
+            async with _gemini_breaker:
+                response = await self.client.aio.models.generate_content(
+                    model=self.model,
+                    contents=prompt,
+                    config=config,
+                )
 
             response_text = response.text or ""
 
@@ -816,13 +827,7 @@ Be thorough but factual - only describe what you can see."""
             ) from e
 
 
-# Singleton instance
-_gemini_client: GeminiClient | None = None
-
-
+@lru_cache(maxsize=1)
 def get_gemini_client() -> GeminiClient:
-    """Get or create Gemini client instance."""
-    global _gemini_client
-    if _gemini_client is None:
-        _gemini_client = GeminiClient()
-    return _gemini_client
+    """Get or create Gemini client instance (thread-safe via lru_cache)."""
+    return GeminiClient()

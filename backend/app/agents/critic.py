@@ -65,8 +65,6 @@ class CriticAgent(BaseAgent):
         # Get the answer and sources from context
         synthesis_result = input.context.get("synthesis_result", {})
         answer = synthesis_result.get("answer", "")
-        source_map = synthesis_result.get("source_map", {})
-
         internal_sources = input.context.get("internal_sources", [])
         web_sources = input.context.get("web_sources", [])
 

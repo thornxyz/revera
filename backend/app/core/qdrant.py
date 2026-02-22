@@ -1,6 +1,7 @@
 """Qdrant client wrapper and collection management."""
 
 import logging
+from functools import lru_cache
 
 from qdrant_client import QdrantClient, models
 
@@ -69,13 +70,7 @@ class QdrantService:
         return self.client
 
 
-# Singleton
-_qdrant_service: QdrantService | None = None
-
-
+@lru_cache(maxsize=1)
 def get_qdrant_service() -> QdrantService:
-    """Get or create Qdrant service instance."""
-    global _qdrant_service
-    if _qdrant_service is None:
-        _qdrant_service = QdrantService()
-    return _qdrant_service
+    """Get or create Qdrant service instance (thread-safe via lru_cache)."""
+    return QdrantService()

@@ -1,6 +1,7 @@
 """Chat cleanup service for complete deletion of chat and associated data."""
 
 import logging
+from functools import lru_cache
 
 from postgrest import CountMethod
 from qdrant_client import models
@@ -172,8 +173,9 @@ class ChatCleanupService:
         """
         Delete all documents for this chat.
 
-        This will cascade to document_chunks via database foreign keys.
-        Also deletes embeddings from Qdrant by document_id.
+        Batch-deletes all Qdrant vectors in a single call using MatchAny,
+        then bulk-deletes the Supabase document rows.  This is both faster
+        and avoids leaving orphaned vectors if a mid-loop error occurs.
         """
         deleted_count = 0
 
@@ -188,36 +190,49 @@ class ChatCleanupService:
             )
 
             documents = docs_result.data or []
+            if not documents:
+                logger.info("[CLEANUP] No documents found for chat")
+                return 0
 
-            for doc in documents:
-                doc_id: str = doc["id"]  # type: ignore
-                try:
-                    # Delete vectors from Qdrant (by document_id)
-                    self.qdrant.get_client().delete(
-                        collection_name=self.qdrant.collection_name,
-                        points_selector=models.FilterSelector(
-                            filter=models.Filter(
-                                must=[
-                                    models.FieldCondition(
-                                        key="document_id",
-                                        match=models.MatchValue(value=str(doc_id)),
-                                    )
-                                ]
-                            )
-                        ),
-                    )
+            doc_ids: list[str] = [str(doc["id"]) for doc in documents]  # type: ignore
 
-                    # Delete document record (cascades to chunks)
-                    self.supabase.table("documents").delete().eq("id", doc_id).execute()
+            try:
+                # Batch-delete all vectors in a single Qdrant call
+                self.qdrant.get_client().delete(
+                    collection_name=self.qdrant.collection_name,
+                    points_selector=models.FilterSelector(
+                        filter=models.Filter(
+                            must=[
+                                models.FieldCondition(
+                                    key="document_id",
+                                    match=models.MatchAny(any=doc_ids),
+                                )
+                            ]
+                        )
+                    ),
+                )
+                logger.info(
+                    f"[CLEANUP] Batch-deleted Qdrant vectors for {len(doc_ids)} documents"
+                )
+            except Exception as e:
+                logger.error(
+                    f"[CLEANUP] Failed to batch-delete Qdrant vectors: {e}",
+                    exc_info=True,
+                )
 
-                    deleted_count += 1
-                except Exception as e:
-                    logger.error(
-                        f"[CLEANUP] Failed to delete document {doc_id}: {e}",
-                        exc_info=True,
-                    )
-
-            logger.info(f"[CLEANUP] Deleted {deleted_count} documents")
+            # Bulk-delete all document records from Supabase
+            try:
+                self.supabase.table("documents").delete().eq("chat_id", chat_id).eq(
+                    "user_id", user_id
+                ).execute()
+                deleted_count = len(doc_ids)
+                logger.info(
+                    f"[CLEANUP] Deleted {deleted_count} documents from Supabase"
+                )
+            except Exception as e:
+                logger.error(
+                    f"[CLEANUP] Failed to bulk-delete documents: {e}", exc_info=True
+                )
 
         except Exception as e:
             logger.error(f"[CLEANUP] Error deleting documents: {e}", exc_info=True)
@@ -283,13 +298,7 @@ class ChatCleanupService:
             return 0
 
 
-# Singleton
-_cleanup_service: ChatCleanupService | None = None
-
-
+@lru_cache(maxsize=1)
 def get_cleanup_service() -> ChatCleanupService:
-    """Get or create cleanup service instance."""
-    global _cleanup_service
-    if _cleanup_service is None:
-        _cleanup_service = ChatCleanupService()
-    return _cleanup_service
+    """Get or create cleanup service instance (thread-safe via lru_cache)."""
+    return ChatCleanupService()

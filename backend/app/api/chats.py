@@ -1,8 +1,10 @@
 """Chats API routes for multi-turn conversations."""
 
+import asyncio
 import json
 import logging
 import uuid
+from collections import defaultdict
 from datetime import datetime
 from uuid import UUID
 
@@ -11,13 +13,23 @@ from pydantic import BaseModel, field_validator
 
 from app.core.auth import get_current_user_id
 from app.core.database import get_supabase_client
+from app.core.exceptions import ReveraError
 from app.core.utils import sanitize_for_postgres
+from app.core.validation import validated_uuid
 from app.models.schemas import Chat, ChatCreate, ChatWithPreview, Message
 from app.services.agent_memory import get_agent_memory_service
 
 logger = logging.getLogger(__name__)
 
 MAX_QUERY_LENGTH = 5000
+
+# Maximum concurrent SSE streams allowed per user.
+MAX_STREAMS_PER_USER = 3
+
+# Per-user semaphores (lazily created, keyed by user_id).
+_user_stream_semaphores: dict[str, asyncio.Semaphore] = defaultdict(
+    lambda: asyncio.Semaphore(MAX_STREAMS_PER_USER)
+)
 
 router = APIRouter()
 
@@ -197,6 +209,7 @@ async def get_chat(
 ):
     """Get details of a specific chat."""
     logger.info(f"[CHATS] Getting chat_id={chat_id} for user_id={user_id}")
+    chat_id = validated_uuid(chat_id, "chat_id")
 
     try:
         supabase = get_supabase_client()
@@ -250,6 +263,7 @@ async def update_chat(
     user_id: str = Depends(get_current_user_id),
 ):
     """Update chat details (e.g., rename title)."""
+    chat_id = validated_uuid(chat_id, "chat_id")
     supabase = get_supabase_client()
 
     # Verify ownership
@@ -317,6 +331,8 @@ async def delete_chat(
     """
     from app.services.chat_cleanup import get_cleanup_service
 
+    chat_id = validated_uuid(chat_id, "chat_id")
+
     try:
         cleanup_service = get_cleanup_service()
         stats = await cleanup_service.delete_chat_completely(chat_id, user_id)
@@ -342,6 +358,7 @@ async def get_chat_messages(
     user_id: str = Depends(get_current_user_id),
 ):
     """Get all messages for a chat."""
+    chat_id = validated_uuid(chat_id, "chat_id")
     supabase = get_supabase_client()
 
     # Verify chat ownership
@@ -431,6 +448,8 @@ async def get_message_verification(
     """
     from fastapi.responses import JSONResponse
 
+    chat_id = validated_uuid(chat_id, "chat_id")
+    message_id = validated_uuid(message_id, "message_id")
     supabase = get_supabase_client()
 
     # Verify chat ownership
@@ -493,6 +512,7 @@ async def send_chat_query_stream(
     from fastapi.responses import StreamingResponse
     from app.agents.orchestrator import Orchestrator
 
+    chat_id = validated_uuid(chat_id, "chat_id")
     logger.info(
         f"[CHAT_STREAM] Starting stream for chat_id={chat_id}, user_id={user_id}"
     )
@@ -535,139 +555,174 @@ async def send_chat_query_stream(
 
         async def event_generator():
             """Generate SSE events for the research stream."""
-            try:
-                logger.info(
-                    f"[CHAT_STREAM] Starting orchestrator for thread_id={thread_id}"
+            sem = _user_stream_semaphores[user_id]
+            if not sem._value:  # noqa: SLF001  — zero permits available
+                logger.warning(
+                    f"[CHAT_STREAM] Too many concurrent streams for user_id={user_id}"
                 )
-                orchestrator = Orchestrator(user_id)
-
-                accumulated_answer = ""
-                accumulated_thinking = ""
-                message_id_from_orch = None
-
-                # Stream research with chat context
-                async for event in orchestrator.research_stream_with_context(
-                    query=request.query,
-                    chat_id=UUID(chat_id),
-                    thread_id=thread_id,
-                    use_web=request.use_web,
-                    document_ids=request.document_ids,
-                ):
-                    event_type = event.get("type", "unknown")
-                    logger.debug(
-                        f"[CHAT_STREAM] Event: type={event_type}, node={event.get('node', 'N/A')}"
-                    )
-
-                    if event_type == "message_id":
-                        message_id_from_orch = event.get("message_id")
-                        yield f"event: message_id\ndata: {json.dumps({'message_id': message_id_from_orch})}\n\n"
-
-                    elif event_type == "node_complete":
-                        yield f"event: agent_status\ndata: {json.dumps({'node': event.get('node'), 'status': event.get('status', 'complete')})}\n\n"
-
-                    elif event_type == "answer_chunk":
-                        content = event.get("content", "")
-                        accumulated_answer += content
-                        yield f"event: answer_chunk\ndata: {json.dumps({'content': content})}\n\n"
-
-                    elif event_type == "thought_chunk":
-                        content = event.get("content", "")
-                        accumulated_thinking += content
-                        yield f"event: thought_chunk\ndata: {json.dumps({'content': content})}\n\n"
-
-                    elif event_type == "sources":
-                        logger.info(
-                            f"[CHAT_STREAM] Sources received: {len(event.get('sources', []))} sources"
-                        )
-                        yield f"event: sources\ndata: {json.dumps({'sources': event.get('sources', [])})}\n\n"
-
-                    elif event_type == "title_updated":
-                        yield f"event: title_updated\ndata: {json.dumps({'title': event.get('title'), 'chat_id': event.get('chat_id')})}\n\n"
-
-                    elif event_type == "error":
-                        yield f"event: error\ndata: {json.dumps({'message': event.get('message', 'Unknown error')})}\n\n"
-
-                    elif event_type == "complete":
-                        # Use message_id from early event, or fall back to session_id
-                        message_id = message_id_from_orch or str(
-                            UUID(event.get("session_id"))
-                        )
-                        logger.info(
-                            f"[CHAT_STREAM] Research complete, storing message_id={message_id}"
-                        )
-
-                        # Use agent_timeline from event if available, otherwise empty
-                        agent_timeline = event.get("agent_timeline", [])
-
-                        # Fallback to DB if empty (legacy support)
-                        if not agent_timeline:
-                            try:
-                                timeline_logs = (
-                                    supabase.table("agent_logs")
-                                    .select("*")
-                                    .eq("session_id", event.get("session_id"))
-                                    .order("created_at")
-                                    .execute()
-                                )
-                                if isinstance(timeline_logs.data, list):
-                                    for log in timeline_logs.data:
-                                        if isinstance(log, dict):
-                                            agent_timeline.append(
-                                                {
-                                                    "agent": log.get("agent_name"),
-                                                    "latency_ms": log.get("latency_ms"),
-                                                    "events": log.get("events"),
-                                                }
-                                            )
-                            except Exception as e:
-                                logger.error(
-                                    f"[CHAT_STREAM] Failed to fetch timeline logs: {e}"
-                                )
-                                agent_timeline = []
-
-                        # Prefer definitive answer from orchestrator over accumulated chunks
-                        final_answer = event.get("answer", accumulated_answer)
-
-                        logger.info(
-                            f"[CHAT_STREAM] Inserting message. Thinking len: {len(accumulated_thinking)}, Timeline len: {len(agent_timeline)}"
-                        )
-
-                        supabase.table("messages").insert(
-                            sanitize_for_postgres(
-                                {
-                                    "id": message_id,
-                                    "chat_id": chat_id,
-                                    "session_id": event.get("session_id"),
-                                    "query": request.query,
-                                    "answer": final_answer,
-                                    "thinking": accumulated_thinking,
-                                    "agent_timeline": agent_timeline,
-                                    "role": "assistant",
-                                    "sources": event.get("sources", []),
-                                    "verification": event.get("verification"),
-                                    "confidence": event.get("confidence"),
-                                }
-                            )
-                        ).execute()
-
-                        complete_data = {
-                            "message_id": message_id,
-                            "session_id": event.get("session_id"),
-                            "confidence": event.get("confidence", "unknown"),
-                            "total_latency_ms": event.get("total_latency_ms", 0),
-                            "sources": event.get("sources", []),
-                            "verification": event.get("verification"),
+                yield (
+                    "event: error\ndata: "
+                    + json.dumps(
+                        {
+                            "code": "TOO_MANY_STREAMS",
+                            "message": "You have too many active streams. Please wait for one to finish.",
+                            "recoverable": True,
                         }
-                        logger.info(
-                            f"[CHAT_STREAM] Stream complete: message_id={message_id}, latency={event.get('total_latency_ms', 0)}ms"
-                        )
-                        yield f"event: complete\ndata: {json.dumps(complete_data)}\n\n"
-
-            except Exception as e:
-                logger.error(
-                    f"[CHAT_STREAM] Error in event generator: {str(e)}", exc_info=True
+                    )
+                    + "\n\n"
                 )
-                yield f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n"
+                return
+
+            async with sem:
+                try:
+                    logger.info(
+                        f"[CHAT_STREAM] Starting orchestrator for thread_id={thread_id}"
+                    )
+                    orchestrator = Orchestrator(user_id)
+
+                    accumulated_answer = ""
+                    accumulated_thinking = ""
+                    message_id_from_orch = None
+
+                    # Stream research with chat context
+                    async for event in orchestrator.research_stream_with_context(
+                        query=request.query,
+                        chat_id=UUID(chat_id),
+                        thread_id=thread_id,
+                        use_web=request.use_web,
+                        document_ids=request.document_ids,
+                    ):
+                        event_type = event.get("type", "unknown")
+                        logger.debug(
+                            f"[CHAT_STREAM] Event: type={event_type}, node={event.get('node', 'N/A')}"
+                        )
+
+                        if event_type == "message_id":
+                            message_id_from_orch = event.get("message_id")
+                            yield f"event: message_id\ndata: {json.dumps({'message_id': message_id_from_orch})}\n\n"
+
+                        elif event_type == "node_complete":
+                            yield f"event: agent_status\ndata: {json.dumps({'node': event.get('node'), 'status': event.get('status', 'complete')})}\n\n"
+
+                        elif event_type == "answer_chunk":
+                            content = event.get("content", "")
+                            accumulated_answer += content
+                            yield f"event: answer_chunk\ndata: {json.dumps({'content': content})}\n\n"
+
+                        elif event_type == "thought_chunk":
+                            content = event.get("content", "")
+                            accumulated_thinking += content
+                            yield f"event: thought_chunk\ndata: {json.dumps({'content': content})}\n\n"
+
+                        elif event_type == "sources":
+                            logger.info(
+                                f"[CHAT_STREAM] Sources received: {len(event.get('sources', []))} sources"
+                            )
+                            yield f"event: sources\ndata: {json.dumps({'sources': event.get('sources', [])})}\n\n"
+
+                        elif event_type == "title_updated":
+                            yield f"event: title_updated\ndata: {json.dumps({'title': event.get('title'), 'chat_id': event.get('chat_id')})}\n\n"
+
+                        elif event_type == "error":
+                            yield f"event: error\ndata: {json.dumps({'message': event.get('message', 'Unknown error')})}\n\n"
+
+                        elif event_type == "complete":
+                            # Use message_id from early event, or fall back to session_id
+                            message_id = message_id_from_orch or str(
+                                UUID(event.get("session_id"))
+                            )
+                            logger.info(
+                                f"[CHAT_STREAM] Research complete, storing message_id={message_id}"
+                            )
+
+                            # Use agent_timeline from event if available, otherwise empty
+                            agent_timeline = event.get("agent_timeline", [])
+
+                            # Fallback to DB if empty (legacy support)
+                            if not agent_timeline:
+                                try:
+                                    timeline_logs = (
+                                        supabase.table("agent_logs")
+                                        .select("*")
+                                        .eq("session_id", event.get("session_id"))
+                                        .order("created_at")
+                                        .execute()
+                                    )
+                                    if isinstance(timeline_logs.data, list):
+                                        for log in timeline_logs.data:
+                                            if isinstance(log, dict):
+                                                agent_timeline.append(
+                                                    {
+                                                        "agent": log.get("agent_name"),
+                                                        "latency_ms": log.get(
+                                                            "latency_ms"
+                                                        ),
+                                                        "events": log.get("events"),
+                                                    }
+                                                )
+                                except Exception as e:
+                                    logger.error(
+                                        f"[CHAT_STREAM] Failed to fetch timeline logs: {e}"
+                                    )
+                                    agent_timeline = []
+
+                            # Prefer definitive answer from orchestrator over accumulated chunks
+                            final_answer = event.get("answer", accumulated_answer)
+
+                            logger.info(
+                                f"[CHAT_STREAM] Inserting message. Thinking len: {len(accumulated_thinking)}, Timeline len: {len(agent_timeline)}"
+                            )
+
+                            supabase.table("messages").insert(
+                                sanitize_for_postgres(
+                                    {
+                                        "id": message_id,
+                                        "chat_id": chat_id,
+                                        "session_id": event.get("session_id"),
+                                        "query": request.query,
+                                        "answer": final_answer,
+                                        "thinking": accumulated_thinking,
+                                        "agent_timeline": agent_timeline,
+                                        "role": "assistant",
+                                        "sources": event.get("sources", []),
+                                        "verification": event.get("verification"),
+                                        "confidence": event.get("confidence"),
+                                    }
+                                )
+                            ).execute()
+
+                            complete_data = {
+                                "message_id": message_id,
+                                "session_id": event.get("session_id"),
+                                "confidence": event.get("confidence", "unknown"),
+                                "total_latency_ms": event.get("total_latency_ms", 0),
+                                "sources": event.get("sources", []),
+                                "verification": event.get("verification"),
+                            }
+                            logger.info(
+                                f"[CHAT_STREAM] Stream complete: message_id={message_id}, latency={event.get('total_latency_ms', 0)}ms"
+                            )
+                            yield f"event: complete\ndata: {json.dumps(complete_data)}\n\n"
+
+                except Exception as e:
+                    logger.error(
+                        f"[CHAT_STREAM] Error in event generator: {str(e)}",
+                        exc_info=True,
+                    )
+                    # Emit structured error — never leak raw exception messages to the client
+                    if isinstance(e, ReveraError):
+                        error_payload = {
+                            "code": e.error_code,
+                            "message": e.message,
+                            "recoverable": e.recoverable,
+                        }
+                    else:
+                        error_payload = {
+                            "code": "INTERNAL_ERROR",
+                            "message": "An unexpected error occurred. Please try again.",
+                            "recoverable": True,
+                        }
+                    yield f"event: error\ndata: {json.dumps(error_payload)}\n\n"
 
         return StreamingResponse(
             event_generator(),
@@ -705,6 +760,7 @@ async def get_chat_memory(
     Returns episodic memories (past agent executions) for all agents.
     Used by the Timeline panel to show what agents remember.
     """
+    chat_id = validated_uuid(chat_id, "chat_id")
     supabase = get_supabase_client()
 
     # Verify chat ownership

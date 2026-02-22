@@ -2,12 +2,14 @@
 
 import asyncio
 import logging
+from functools import lru_cache
 from uuid import UUID
 from dataclasses import dataclass
 
 from fastembed import SparseTextEmbedding, LateInteractionTextEmbedding
 from qdrant_client import models
 
+from app.core.config import get_settings
 from app.core.qdrant import get_qdrant_service
 from app.llm.gemini import get_gemini_client
 
@@ -45,14 +47,15 @@ class HybridSearchService:
         self.qdrant = get_qdrant_service()
         self.gemini = get_gemini_client()
 
+        settings = get_settings()
         # Initialize Local Models for Query Embedding
         self.colbert_model = LateInteractionTextEmbedding(
             model_name="colbert-ir/colbertv2.0",
-            cache_dir="./models_cache",
+            cache_dir=settings.model_cache_dir,
         )
         self.sparse_model = SparseTextEmbedding(
             model_name="Qdrant/bm25",
-            cache_dir="./models_cache",
+            cache_dir=settings.model_cache_dir,
         )
 
     async def search(
@@ -339,13 +342,7 @@ Output only the rewritten query, nothing else."""
         return search_results
 
 
-# Singleton
-_search_service: HybridSearchService | None = None
-
-
+@lru_cache(maxsize=1)
 def get_search_service() -> HybridSearchService:
-    """Get or create search service instance."""
-    global _search_service
-    if _search_service is None:
-        _search_service = HybridSearchService()
-    return _search_service
+    """Get or create search service instance (thread-safe via lru_cache)."""
+    return HybridSearchService()

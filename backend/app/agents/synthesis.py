@@ -12,6 +12,10 @@ from app.services.image_ingestion import get_image_ingestion_service
 
 logger = logging.getLogger(__name__)
 
+# Hard cap on in-memory response accumulation to prevent unbounded growth
+# during very long streaming sessions.
+MAX_RESPONSE_CHARS = 100_000
+
 
 SYNTHESIS_SYSTEM_PROMPT = """You are a research synthesis agent. Your job is to produce accurate, well-cited answers based on provided context.
 
@@ -410,6 +414,7 @@ DO NOT repeat the same unsupported claims."""
                     "It will be appended to your response automatically.\n"
                     "You MUST:\n"
                     "- Acknowledge the generated image briefly (e.g., 'Here is the visualization of X you requested.')\n"
+                    "- Do NOT include any ![...]() markdown image tags in your response. The image will be appended automatically after your text.\n"
                     "- Do NOT output any JSON, tool calls, or code to generate the image.\n"
                     "- You MAY still provide a research-style answer with citations if the query requires it, "
                     "integrating the acknowledgment naturally.\n"
@@ -466,10 +471,12 @@ Write a well-formatted markdown answer with inline [Source N] citations."""
                     continue
 
                 if chunk_type == "thought":
-                    full_thoughts += chunk_content
+                    if len(full_thoughts) < MAX_RESPONSE_CHARS:
+                        full_thoughts += chunk_content
                     yield {"type": "thought_chunk", "content": chunk_content}
                 elif chunk_type == "text":
-                    full_answer += chunk_content
+                    if len(full_answer) < MAX_RESPONSE_CHARS:
+                        full_answer += chunk_content
                     yield {"type": "answer_chunk", "content": chunk_content}
         except Exception as e:
             logger.error(f"[{self.name}] Streaming error: {e}", exc_info=True)

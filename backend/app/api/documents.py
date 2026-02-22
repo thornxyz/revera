@@ -6,6 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from pydantic import BaseModel
 from uuid import UUID
 
+import filetype
+
+from app.core.validation import validated_uuid
 from app.services.ingestion import get_ingestion_service
 from app.services.image_ingestion import (
     get_image_ingestion_service,
@@ -20,6 +23,15 @@ logger = logging.getLogger(__name__)
 # Supported file extensions
 SUPPORTED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".gif"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+
+# Magic-byte MIME type allowlist mapped to file category
+ALLOWED_MIME_TYPES: dict[str, str] = {
+    "application/pdf": "pdf",
+    "image/png": "image",
+    "image/jpeg": "image",
+    "image/webp": "image",
+    "image/gif": "image",
+}
 
 
 class DocumentResponse(BaseModel):
@@ -145,6 +157,28 @@ async def upload_document(
             detail=f"File too large (max {max_size // (1024 * 1024)}MB)",
         )
 
+    # Magic byte validation — verify actual file content matches declared extension
+    detected = filetype.guess(content)
+    if detected is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not determine file type from content. Ensure the file is not corrupted.",
+        )
+    detected_mime = detected.mime
+    if detected_mime not in ALLOWED_MIME_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File content type '{detected_mime}' is not allowed.",
+        )
+    # Confirm declared extension matches actual content
+    content_category = ALLOWED_MIME_TYPES[detected_mime]
+    declared_category = "image" if is_image else "pdf"
+    if content_category != declared_category:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File extension does not match content (detected: {detected_mime}).",
+        )
+
     try:
         file_type = "image" if is_image else "pdf"
         logger.info(
@@ -260,6 +294,8 @@ async def delete_document(
     user_id: str = Depends(get_current_user_id),
 ):
     """Delete a document (PDF or image) and all its associated data."""
+    document_id = validated_uuid(document_id, "document_id")
+
     from app.core.database import get_supabase_client
 
     supabase = get_supabase_client()

@@ -2,19 +2,10 @@
 
 import { useState, useRef, useEffect } from "react";
 import {
-  Send,
-  Loader2,
   Sparkles,
   Upload,
-  Brain,
-  ChevronDown,
-  ChevronUp
 } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { DocumentsPanel } from "@/components/documents-panel";
 import { UploadDialog } from "@/components/upload-dialog";
 import { ChatsSidebar } from "@/components/chats-sidebar";
@@ -26,8 +17,8 @@ import { useStreamingChat } from "@/hooks/useStreamingChat";
 import { useUIState } from "@/hooks/useUIState";
 import { ResizableLayout } from "@/components/resizable-layout";
 import { LoginPage } from "@/components/login-page";
-import { AgentProgress } from "@/components/agent-progress";
-import { StreamMarkdown } from "@/components/stream-markdown";
+import { StreamingContent } from "@/components/chat/streaming-content";
+import { ChatInputArea } from "@/components/chat/chat-input-area";
 
 export default function ResearchPage() {
   const { user, loading, signOut } = useAuth();
@@ -283,127 +274,30 @@ export default function ResearchPage() {
 
                 {/* Streaming Content */}
                 {streaming.isStreaming && (
-                  <div className="space-y-6 px-6 py-4">
-                    {/* Agent Progress */}
-                    <AgentProgress activityLog={streaming.activityLog} currentAgent={streaming.currentAgent} />
-
-                    {/* Reasoning/Thoughts */}
-                    {streaming.streamingThoughts && (
-                      <div className="bg-slate-50/80 border border-slate-200 backdrop-blur-sm rounded-xl overflow-hidden">
-                        <button
-                          onClick={ui.toggleReasoningExpanded}
-                          className="w-full px-4 py-3 bg-slate-100/50 border-b border-slate-200/50 flex items-center justify-between hover:bg-slate-100 transition-colors"
-                        >
-                          <div className="flex items-center gap-2">
-                            <Brain className="h-4 w-4 text-violet-500" />
-                            <span className="text-sm font-medium text-slate-600">
-                              Internal Monologue
-                            </span>
-                            <span className="text-xs text-slate-400">
-                              (Chain of Thought)
-                            </span>
-                          </div>
-                          {ui.isReasoningExpanded ? (
-                            <ChevronUp className="h-4 w-4 text-slate-400" />
-                          ) : (
-                            <ChevronDown className="h-4 w-4 text-slate-400" />
-                          )}
-                        </button>
-                        {ui.isReasoningExpanded && (
-                          <div ref={thinkingBoxRef} className="p-4 max-h-60 overflow-y-auto reasoning-box">
-                            <StreamMarkdown
-                              content={streaming.streamingThoughts}
-                              isStreaming={true}
-                              className="text-xs text-slate-600 **:text-xs [&_p]:leading-relaxed [&_code]:text-[10px]"
-                            />
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Streaming Answer */}
-                    {streaming.streamingAnswer && (
-                      <Card className="bg-white/90 border-slate-200/80 backdrop-blur-sm shadow-lg">
-                        <CardContent className="p-4">
-                          <div className="flex items-center gap-2 mb-3">
-                            <div className="h-8 w-8 rounded-full bg-emerald-100 flex items-center justify-center">
-                              <Sparkles className="h-4 w-4 text-emerald-600" />
-                            </div>
-                            <span className="text-sm font-medium text-slate-900">
-                              Assistant
-                            </span>
-                            <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200">
-                              Streaming...
-                            </Badge>
-                          </div>
-                          <StreamMarkdown
-                            content={streaming.streamingAnswer}
-                            isStreaming={true}
-                          />
-                        </CardContent>
-                      </Card>
-                    )}
-
-                  </div>
+                  <StreamingContent
+                    activityLog={streaming.activityLog}
+                    currentAgent={streaming.currentAgent}
+                    streamingThoughts={streaming.streamingThoughts}
+                    streamingAnswer={streaming.streamingAnswer}
+                    isReasoningExpanded={ui.isReasoningExpanded}
+                    toggleReasoningExpanded={ui.toggleReasoningExpanded}
+                    thinkingBoxRef={thinkingBoxRef}
+                  />
                 )}
               </div>
             )}
           </div>
 
           {/* Input Area */}
-          <div className="px-4 sm:px-6 py-3 sm:py-4 bg-transparent shrink-0">
-            <div className="max-w-4xl mx-auto w-full">
-              <div
-                className={cn(
-                  "input-pill-container transition-all duration-500",
-                  "glass-morphism bg-white/70 ring-1 ring-slate-200/50",
-                  "premium-shadow"
-                )}
-              >
-                <div className="flex items-center gap-1 pl-2">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => ui.setUploadDialogOpen(true)}
-                    className="h-10 w-10 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100/50 transition-all duration-300"
-                    title="Upload Documents"
-                  >
-                    <Upload className="h-5 w-5" />
-                  </Button>
-                </div>
-
-                <div className="flex-1 relative">
-                  <Textarea
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder={
-                      currentChatId
-                        ? "Continue the conversation..."
-                        : "Ask a research question..."
-                    }
-                    className="h-11 min-h-11 max-h-35 bg-transparent border-0 ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 px-2 py-3 text-sm resize-none"
-                    disabled={isLoading}
-                  />
-                </div>
-
-                <div className="pr-1.5 flex items-center">
-                  <Button
-                    size="icon"
-                    onClick={handleSubmit}
-                    disabled={isLoading || !query.trim()}
-                    className="h-9 w-9 rounded-xl transition-all duration-300 shadow-sm bg-slate-900 hover:bg-slate-800 text-white"
-                  >
-                    {isLoading ? (
-                      <Loader2 className="h-4.5 w-4.5 animate-spin" />
-                    ) : (
-                      <Send className="h-4.5 w-4.5" />
-                    )}
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </div>
+          <ChatInputArea
+            query={query}
+            setQuery={setQuery}
+            isLoading={isLoading}
+            onSubmit={handleSubmit}
+            onKeyDown={handleKeyDown}
+            onUploadClick={() => ui.setUploadDialogOpen(true)}
+            currentChatId={currentChatId}
+          />
         </div>
 
         {/* Upload Dialog */}

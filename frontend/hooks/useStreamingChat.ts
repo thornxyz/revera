@@ -11,15 +11,7 @@ import {
 } from '@/lib/api';
 import { useChatStore } from '@/store/chat-store';
 import { ActivityLogItem } from '@/components/agent-progress';
-
-const AGENT_MESSAGES: Record<string, string> = {
-    planning: "Strategy determined",
-    retrieval: "Internal documents searched",
-    web_search: "External sources fetched",
-    synthesis: "Response drafted",
-    critic: "Claims verified",
-    image_gen: "Image generated",
-};
+import { AGENT_MESSAGES } from '@/lib/constants';
 
 export function useStreamingChat() {
     // Streaming state

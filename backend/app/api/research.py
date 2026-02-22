@@ -1,7 +1,6 @@
 """Research API routes."""
 
 import logging
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel

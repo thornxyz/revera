@@ -1,3 +1,6 @@
+import contextvars
+import logging
+import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -6,6 +9,7 @@ from fastapi.responses import JSONResponse
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.config import get_settings
 from app.core.logging_config import setup_logging, get_logger
@@ -25,6 +29,42 @@ if settings.debug:
 
 # Rate limiter - 60 requests per minute by default
 limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
+
+# Context variable for per-request ID (injected by RequestIdMiddleware)
+request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "request_id", default="-"
+)
+
+
+class RequestIdMiddleware(BaseHTTPMiddleware):
+    """Attach a UUID request_id to every request and response."""
+
+    async def dispatch(self, request: Request, call_next):
+        req_id = str(uuid.uuid4())
+        request_id_var.set(req_id)
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = req_id
+        return response
+
+
+# Maximum allowed body size (10 MB) — rejects oversized non-upload requests early.
+MAX_BODY_SIZE = 10 * 1024 * 1024
+
+
+class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
+    """Reject non-upload requests whose body exceeds MAX_BODY_SIZE."""
+
+    async def dispatch(self, request: Request, call_next):
+        content_length = request.headers.get("content-length")
+        # Skip multipart uploads — file-upload handlers enforce their own limits.
+        content_type = request.headers.get("content-type", "")
+        if "multipart/form-data" not in content_type and content_length is not None:
+            if int(content_length) > MAX_BODY_SIZE:
+                return JSONResponse(
+                    status_code=413,
+                    content={"detail": "Request body too large"},
+                )
+        return await call_next(request)
 
 
 async def rate_limit_exceeded_handler(request: Request, exc: Exception) -> JSONResponse:
@@ -59,6 +99,10 @@ app = FastAPI(
 # Rate limiting
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+
+# Per-request ID and body-size guard (added before CORS so headers are set early)
+app.add_middleware(RequestSizeLimitMiddleware)
+app.add_middleware(RequestIdMiddleware)
 
 # CORS middleware for frontend
 app.add_middleware(

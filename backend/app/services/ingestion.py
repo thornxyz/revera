@@ -4,6 +4,7 @@ import asyncio
 import io
 import logging
 import uuid
+from functools import lru_cache
 from typing import Any, cast
 from uuid import UUID
 
@@ -36,12 +37,12 @@ class IngestionService:
         # Late Interaction (ColBERT)
         self.colbert_model = LateInteractionTextEmbedding(
             model_name="colbert-ir/colbertv2.0",
-            cache_dir="./models_cache",
+            cache_dir=self.settings.model_cache_dir,
         )
         # Sparse (BM25)
         self.sparse_model = SparseTextEmbedding(
             model_name="Qdrant/bm25",
-            cache_dir="./models_cache",
+            cache_dir=self.settings.model_cache_dir,
         )
 
     async def ingest_pdf(
@@ -334,13 +335,7 @@ class IngestionService:
         return False
 
 
-# Singleton
-_ingestion_service: IngestionService | None = None
-
-
+@lru_cache(maxsize=1)
 def get_ingestion_service() -> IngestionService:
-    """Get or create ingestion service instance."""
-    global _ingestion_service
-    if _ingestion_service is None:
-        _ingestion_service = IngestionService()
-    return _ingestion_service
+    """Get or create ingestion service instance (thread-safe via lru_cache)."""
+    return IngestionService()

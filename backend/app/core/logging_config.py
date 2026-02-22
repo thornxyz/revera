@@ -15,11 +15,80 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import re
 import sys
 from datetime import datetime, timezone
 from typing import Any, Callable
+
+# UUIDs in log messages are replaced with their first 8 hex chars + "***"
+_UUID_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+    re.IGNORECASE,
+)
+
+# Maximum length for free-text query/content fields before truncation
+_MAX_CONTENT_CHARS = 200
+
+
+def _mask_uuid(value: str) -> str:
+    """Replace a full UUID with a hash-derived short token for log privacy."""
+    digest = hashlib.sha256(value.encode()).hexdigest()[:8]
+    return f"<uid:{digest}>"
+
+
+def _redact_string(value: str) -> str:
+    """Replace UUIDs embedded in a log message string."""
+    return _UUID_RE.sub(lambda m: _mask_uuid(m.group(0)), value)
+
+
+def _redact_value(key: str, value: Any) -> Any:
+    """Redact a single extra field depending on its key and type."""
+    pii_keys = {
+        "user_id",
+        "doc_user_id",
+        "owner_id",
+        "query",
+        "doc_filename",
+        "filename",
+    }
+    content_keys = {"query", "content", "answer", "thinking"}
+
+    if key in pii_keys and isinstance(value, str):
+        # Full UUID replacement for identity fields
+        if _UUID_RE.fullmatch(value):
+            return _mask_uuid(value)
+        # Truncate long free-text fields
+        if key in content_keys and len(value) > _MAX_CONTENT_CHARS:
+            return value[:_MAX_CONTENT_CHARS] + "…[truncated]"
+    return value
+
+
+class PiiRedactionFilter(logging.Filter):
+    """
+    Log filter that redacts PII from log records.
+
+    - Replaces UUID values in the message string.
+    - Masks UUID extra fields (user_id, etc.).
+    - Truncates long content fields (query, answer) at INFO level and above.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003
+        # Redact the main message
+        if isinstance(record.msg, str):
+            record.msg = _redact_string(record.msg)
+
+        # Redact known extra fields attached to the record
+        for key in list(vars(record).keys()):
+            if key.startswith("_") or key in logging.LogRecord.__dict__:
+                continue
+            original = getattr(record, key)
+            if isinstance(original, str):
+                setattr(record, key, _redact_value(key, original))
+
+        return True
 
 
 class TextFormatter(logging.Formatter):
@@ -161,12 +230,14 @@ def setup_logging(
     # Console handler
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
+    console_handler.addFilter(PiiRedactionFilter())
     root_logger.addHandler(console_handler)
 
     # File handler (optional)
     if log_file:
         file_handler = logging.FileHandler(log_file)
         file_handler.setFormatter(formatter)
+        file_handler.addFilter(PiiRedactionFilter())
         root_logger.addHandler(file_handler)
 
     # Reduce noise from third-party libraries

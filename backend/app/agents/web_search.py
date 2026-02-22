@@ -8,10 +8,18 @@ from dataclasses import dataclass
 from tavily import AsyncTavilyClient
 
 from app.agents.base import BaseAgent, AgentInput, AgentOutput
+from app.core.circuit_breaker import CircuitBreaker, CircuitBreakerOpenError
 from app.core.config import get_settings
 from app.llm.gemini import get_gemini_client
 
 logger = logging.getLogger(__name__)
+
+# Module-level circuit breaker shared across all WebSearchAgent instances
+_tavily_breaker = CircuitBreaker(
+    name="tavily",
+    failure_threshold=5,
+    cooldown_seconds=60.0,
+)
 
 
 @dataclass
@@ -346,7 +354,16 @@ class WebSearchAgent(BaseAgent):
 
             # Use advanced search for research queries
             # This does deeper content extraction
-            response = await self.tavily.search(**search_kwargs)
+            response = None
+            try:
+                async with _tavily_breaker:
+                    response = await self.tavily.search(**search_kwargs)
+            except CircuitBreakerOpenError as e:
+                logger.warning(f"[WEB_SEARCH] Tavily circuit open: {e}")
+                return [], None
+
+            if response is None:
+                return [], None
 
             sources = []
             for result in response.get("results", []):
@@ -386,12 +403,21 @@ class WebSearchAgent(BaseAgent):
             return []
 
         try:
-            response = await self.tavily.search(
-                query=query,
-                search_depth="advanced",
-                max_results=max_results,
-                include_answer=False,
-            )
+            response = None
+            try:
+                async with _tavily_breaker:
+                    response = await self.tavily.search(
+                        query=query,
+                        search_depth="advanced",
+                        max_results=max_results,
+                        include_answer=False,
+                    )
+            except CircuitBreakerOpenError as e:
+                logger.warning(f"[WEB_SEARCH] Tavily circuit open: {e}")
+                return []
+
+            if response is None:
+                return []
 
             return [
                 WebSource(
