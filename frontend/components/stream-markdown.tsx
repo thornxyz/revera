@@ -8,7 +8,7 @@ import { splitMarkdown } from "@/lib/markdown-utils";
 import "katex/dist/katex.min.css";
 
 interface StreamMarkdownProps {
-    content: string;
+    content: string | null;
     isStreaming?: boolean;
     className?: string;
     onCitationClick?: () => void;

@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import { StreamMarkdown } from "./stream-markdown";
 
 interface MessageThinkingProps {
-    thinking?: string;
+    thinking?: string | null;
     timeline?: AgentStep[];
     isStreaming?: boolean;
 }
