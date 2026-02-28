@@ -1,5 +1,6 @@
 """Agent Memory Service using LangGraph Store for long-term memory."""
 
+import asyncio
 import logging
 from uuid import UUID
 from typing import Any
@@ -52,10 +53,11 @@ class AgentMemoryService:
         )
 
         try:
-            self.store.put(
-                namespace=namespace,
-                key=str(message_id),
-                value={
+            await asyncio.to_thread(
+                self.store.put,
+                namespace,
+                str(message_id),
+                {
                     **memory_state,
                     "message_id": str(message_id),
                     "agent_name": agent_name,
@@ -96,7 +98,8 @@ class AgentMemoryService:
         )
 
         try:
-            items = self.store.search(
+            items = await asyncio.to_thread(
+                self.store.search,
                 namespace,
                 limit=limit,
             )
@@ -118,7 +121,7 @@ class AgentMemoryService:
         current_query: str | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
         """
-        Build memory context for all agents.
+        Build memory context for all agents in parallel.
 
         Args:
             user_id: User ID
@@ -129,42 +132,33 @@ class AgentMemoryService:
             Dict mapping agent names to their memory lists
         """
         agents = ["planner", "retrieval", "synthesis", "critic"]
-        memory_context: dict[str, list[dict[str, Any]]] = {}
 
         logger.info(
             f"[MEMORY] Building memory context for chat_id={chat_id}, query={current_query[:50] if current_query else 'None'}..."
         )
 
-        for agent in agents:
+        def _search_sync(agent: str) -> list[dict[str, Any]]:
             namespace = (str(user_id), str(chat_id), "episodic", agent)
+            search_kwargs: dict[str, Any] = {"limit": self.MEMORY_WINDOW_SIZE}
+            if current_query:
+                search_kwargs["query"] = current_query
+            items = self.store.search(namespace, **search_kwargs)
+            return [item.value for item in items]
 
+        async def fetch_agent_memories(agent: str) -> tuple[str, list[dict[str, Any]]]:
             try:
-                if current_query:
-                    # Semantic search based on current query
-                    logger.debug(f"[MEMORY] Semantic search for {agent} with query")
-                    items = self.store.search(
-                        namespace,
-                        query=current_query,
-                        limit=self.MEMORY_WINDOW_SIZE,
-                    )
-                else:
-                    # Just get recent memories
-                    logger.debug(f"[MEMORY] Fetching recent memories for {agent}")
-                    items = self.store.search(
-                        namespace,
-                        limit=self.MEMORY_WINDOW_SIZE,
-                    )
-
-                memory_context[agent] = [item.value for item in items]
-                logger.debug(
-                    f"[MEMORY]   {agent}: {len(memory_context[agent])} memories"
-                )
-
+                memories = await asyncio.to_thread(_search_sync, agent)
+                return agent, memories
             except Exception as e:
                 logger.error(
                     f"[MEMORY] Failed to build context for {agent}: {e}", exc_info=True
                 )
-                memory_context[agent] = []
+                return agent, []
+
+        results = await asyncio.gather(
+            *[fetch_agent_memories(agent) for agent in agents]
+        )
+        memory_context = dict(results)
 
         total_memories = sum(len(v) for v in memory_context.values())
         logger.info(
@@ -193,7 +187,12 @@ class AgentMemoryService:
         namespace = (str(user_id), str(chat_id), "semantic")
 
         try:
-            self.store.put(namespace=namespace, key=key, value=facts)
+            await asyncio.to_thread(
+                self.store.put,
+                namespace,
+                key,
+                facts,
+            )
             logger.debug(f"[MEMORY] Stored semantic memory: {key}")
         except Exception as e:
             logger.error(f"[MEMORY] Failed to store semantic memory {key}: {e}")
@@ -225,7 +224,9 @@ class AgentMemoryService:
             if query:
                 search_kwargs["query"] = query
 
-            items = self.store.search(namespace, **search_kwargs)
+            items = await asyncio.to_thread(
+                self.store.search, namespace, **search_kwargs
+            )
 
             facts = [item.value for item in items]
             logger.debug(f"[MEMORY] Retrieved {len(facts)} semantic memories")
@@ -282,21 +283,23 @@ Consider these past approaches when planning the current query.
     def _format_retrieval_memory(self, memories: list[dict[str, Any]]) -> str:
         """Format retrieval memory for prompt injection."""
         # Extract document IDs that were highly relevant
-        relevant_docs: set[str] = set()
+        seen: set[str] = set()
+        relevant_docs: list[str] = []
 
         for mem in memories[:5]:
             sources = mem.get("sources", [])
             for source in sources:
                 if isinstance(source, dict) and source.get("score", 0) > 0.7:
                     doc_id = source.get("document_id")
-                    if doc_id:
-                        relevant_docs.add(doc_id)
+                    if doc_id and doc_id not in seen:
+                        seen.add(doc_id)
+                        relevant_docs.append(doc_id)
 
         if not relevant_docs:
             return ""
 
         return f"""
-Previously relevant documents in this conversation: {list(relevant_docs)}
+Previously relevant documents in this conversation: {relevant_docs}
 Prioritize these if they match the current query context.
 """.strip()
 
@@ -342,6 +345,12 @@ Apply similar verification rigor to this response.
 """.strip()
 
 
+_agent_memory_service: AgentMemoryService | None = None
+
+
 def get_agent_memory_service() -> AgentMemoryService:
-    """Get singleton instance of AgentMemoryService."""
-    return AgentMemoryService()
+    """Get the process-wide singleton AgentMemoryService."""
+    global _agent_memory_service
+    if _agent_memory_service is None:
+        _agent_memory_service = AgentMemoryService()
+    return _agent_memory_service

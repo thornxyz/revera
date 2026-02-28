@@ -1,6 +1,5 @@
 "use client";
 
-import { useRef } from "react";
 import { User, Bot, ExternalLink, Loader2 } from "lucide-react";
 import { StreamMarkdown } from "./stream-markdown";
 import { Message, Source } from "@/lib/api";
@@ -14,7 +13,6 @@ interface MessageListProps {
 }
 
 export function MessageList({ messages, isLoading = false, className }: MessageListProps) {
-    const containerRef = useRef<HTMLDivElement>(null);
 
     if (messages.length === 0 && !isLoading) {
         return (
@@ -28,7 +26,7 @@ export function MessageList({ messages, isLoading = false, className }: MessageL
     }
 
     return (
-        <div ref={containerRef} className={cn("max-w-4xl mx-auto space-y-8 p-6", className)}>
+        <div className={cn("max-w-4xl mx-auto space-y-8 p-6", className)}>
             {messages.map((message, index) => (
                 <div key={message.id} className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
                     {/* User Query */}
@@ -56,12 +54,20 @@ export function MessageList({ messages, isLoading = false, className }: MessageL
                             <MessageThinking
                                 thinking={message.thinking}
                                 timeline={message.agent_timeline}
-                                isStreaming={isLoading && index === messages.length - 1}
+                                isStreaming={isLoading && index === messages.length - 1 && !message.answer}
                             />
 
                             <div className="prose prose-slate prose-sm max-w-none">
                                 <StreamMarkdown content={message.answer} isStreaming={false} />
                             </div>
+
+                            {/* Verification in progress indicator */}
+                            {message.confidence === "pending" && (
+                                <div className="flex items-center gap-2 mt-4 text-slate-500">
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    <span className="text-xs font-medium">Verifying accuracy...</span>
+                                </div>
+                            )}
 
                             {/* Sources and Metrics */}
                             {(message.sources?.length > 0 || message.confidence) && (
@@ -78,38 +84,35 @@ export function MessageList({ messages, isLoading = false, className }: MessageL
                                             </div>
                                             <div className="grid gap-3 grid-cols-1 sm:grid-cols-2">
                                                 {message.sources.map((source, idx) => (
-                                                    <SourceCard key={idx} source={source} index={idx + 1} />
+                                                    <SourceCard
+                                                        key={source.chunk_id ?? source.url ?? idx}
+                                                        source={source}
+                                                        index={idx + 1}
+                                                    />
                                                 ))}
                                             </div>
                                         </div>
                                     )}
 
                                     {/* Confidence Badge with Score */}
-                                    {message.confidence && (
+                                    {message.confidence && message.confidence !== "pending" && (
                                         <div className="flex items-center justify-between gap-3 pt-2">
                                             <div className="flex items-center gap-2">
                                                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Confidence</span>
-                                                {message.confidence === "pending" ? (
-                                                    <div className="flex items-center gap-1.5 text-xs text-blue-600">
-                                                        <Loader2 className="h-3 w-3 animate-spin" />
-                                                        <span className="text-[10px] font-medium">Verifying...</span>
-                                                    </div>
-                                                ) : (
-                                                    <span
-                                                        className={cn(
-                                                            "text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wide",
-                                                            (message.confidence === "verified" || message.confidence === "high") && "bg-emerald-100 text-emerald-700",
-                                                            message.confidence === "medium" && "bg-amber-100 text-amber-700",
-                                                            (message.confidence === "low" || message.confidence === "error") && "bg-rose-100 text-rose-700 font-bold"
-                                                        )}
-                                                    >
-                                                        {message.confidence === "verified" ? "✓ Verified" : message.confidence}
-                                                    </span>
-                                                )}
+                                                <span
+                                                    className={cn(
+                                                        "text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wide",
+                                                        (message.confidence === "verified" || message.confidence === "high") && "bg-emerald-100 text-emerald-700",
+                                                        message.confidence === "medium" && "bg-amber-100 text-amber-700",
+                                                        (message.confidence === "low" || message.confidence === "error") && "bg-rose-100 text-rose-700 font-bold"
+                                                    )}
+                                                >
+                                                    {message.confidence === "verified" ? "✓ Verified" : message.confidence}
+                                                </span>
                                             </div>
 
                                             {/* Numeric score meter */}
-                                            {message.verification?.confidence_score !== undefined && message.confidence !== "pending" && (
+                                            {message.verification?.confidence_score !== undefined && (
                                                 <div className="flex items-center gap-3">
                                                     <div className="w-24 h-1.5 bg-slate-100 rounded-full overflow-hidden ring-1 ring-slate-200/50">
                                                         <div
@@ -201,7 +204,7 @@ function SourceCard({ source, index }: { source: Source; index: number }) {
                             {isWeb ? "Web" : isImage ? "Image" : "Document"}
                         </span>
                         {source.score !== undefined && (
-                            <span className="text-[9px] font-medium text-slate-400 tabular-nums">REL: {(source.score * 100).toFixed(1)}%</span>
+                            <span className="text-[9px] font-medium text-slate-400 tabular-nums">REL: {(Math.min(source.score, 1) * 100).toFixed(1)}%</span>
                         )}
                         {isImage && (
                             <span className="text-[9px] font-bold text-emerald-500 uppercase tracking-tighter">AI Generated</span>

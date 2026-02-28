@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { toast } from 'sonner';
 import {
     sendChatMessageStream,
@@ -24,9 +24,18 @@ export function useStreamingChat() {
     const [activityLog, setActivityLog] = useState<ActivityLogItem[]>([]);
     const [error, setError] = useState<string | null>(null);
 
-    // Refs
-    const streamStartTimeRef = useRef<Date>(new Date());
-    const activityLogCounterRef = useRef<number>(0);
+        // Refs
+        const streamStartTimeRef = useRef<Date>(new Date());
+        const activityLogCounterRef = useRef<number>(0);
+        const sessionIdRef = useRef<string | null>(null);
+        const pollAbortRef = useRef<AbortController | null>(null);
+
+    // Abort any in-flight verification poll on unmount
+    useEffect(() => {
+        return () => {
+            pollAbortRef.current?.abort();
+        };
+    }, []);
 
     // Store actions
     const {
@@ -37,6 +46,8 @@ export function useStreamingChat() {
         updateChatTitle,
         updateMessageVerification,
         addChat,
+        addOptimisticMessage,
+        removeOptimisticMessage,
     } = useChatStore();
 
     const resetStreamingState = useCallback(() => {
@@ -87,6 +98,9 @@ export function useStreamingChat() {
         setError(null);
         streamStartTimeRef.current = new Date();
         activityLogCounterRef.current = 0;
+
+        // Add optimistic message to store
+        const optimisticId = addOptimisticMessage(chatId, query);
 
         // --- Frame-based update buffering ---
         // Buffers incoming characters and flushes them on the next animation frame
@@ -150,69 +164,71 @@ export function useStreamingChat() {
                     },
                     onSources: (sources) => setStreamingSources((prev) => [...prev, ...sources]),
                     onTitleUpdated: (title, updatedChatId) => updateChatTitle(updatedChatId, title),
+                    onVerificationPending: (sessionId) => {
+                        sessionIdRef.current = sessionId;
+                    },
                     onComplete: async (data) => {
                         // Ensure final chunks are flushed before completion
                         if (animationFrameId) cancelAnimationFrame(animationFrameId);
                         flushBuffers();
 
-                        // Fetch messages first (async), then apply all state
-                        // changes synchronously so React can batch them into
-                        // a single render pass.
-                        let fetchedMessages;
-                        try {
-                            fetchedMessages = await getChatMessages(chatId!);
-                        } catch (err) {
-                            console.error("Failed to refresh messages:", err);
-                        }
+                        // Parallel fetch: messages and chat list at the same time
+                        const [fetchedMessages, updatedChats] = await Promise.all([
+                            getChatMessages(chatId!),
+                            listChats(),
+                        ]);
 
                         // Apply state changes synchronously — React 18 batches
                         // these into one render.
                         resetStreamingState();
-                        if (fetchedMessages) setMessages(fetchedMessages);
-
-                        // Refresh sidebar chat list
-                        try {
-                            const updatedChats = await listChats();
-                            setChats(updatedChats);
-                        } catch (err) {
-                            console.error("Failed to refresh chat list:", err);
+                        if (fetchedMessages) {
+                            // Remove optimistic message and set real messages
+                            removeOptimisticMessage(optimisticId);
+                            setMessages(fetchedMessages);
                         }
+                        if (updatedChats) setChats(updatedChats);
 
                         const duration = ((Date.now() - streamStartTimeRef.current.getTime()) / 1000).toFixed(1);
                         toast.success("Research complete", {
                             description: `Answer generated in ${duration}s with ${data.sources?.length || 0} sources`,
                         });
 
-                        // Poll verification if pending
-                        if (data.confidence === "pending" && data.session_id) {
+                        // Poll verification if pending (async critic mode)
+                        const verificationSessionId = sessionIdRef.current || data.session_id;
+                        if (data.confidence === "pending" && verificationSessionId) {
+                            pollAbortRef.current?.abort();
+                            pollAbortRef.current = new AbortController();
                             pollVerificationStatus(
                                 chatId!,
-                                data.session_id,
+                                verificationSessionId,
                                 (verification, newConfidence) => {
-                                    updateMessageVerification(data.session_id, verification, newConfidence);
+                                    updateMessageVerification(verificationSessionId, verification, newConfidence);
                                     toast.success("Verification complete", {
                                         description: `Confidence: ${newConfidence}`,
                                     });
-                                }
+                                },
+                                pollAbortRef.current.signal
                             ).catch(console.error);
                         }
                     },
-                    onError: (message) => {
-                        if (animationFrameId) cancelAnimationFrame(animationFrameId);
-                        setError(message);
-                        resetStreamingState();
-                        toast.error("Research failed", { description: message });
-                    },
+                     onError: (message) => {
+                         if (animationFrameId) cancelAnimationFrame(animationFrameId);
+                         setError(message);
+                         removeOptimisticMessage(optimisticId);
+                         resetStreamingState();
+                         toast.error("Research failed", { description: message });
+                     },
                 }
             );
         } catch (err) {
             if (animationFrameId) cancelAnimationFrame(animationFrameId);
             const errorMessage = err instanceof Error ? err.message : "Research failed";
             setError(errorMessage);
+            removeOptimisticMessage(optimisticId);
             resetStreamingState();
             toast.error("Research failed", { description: errorMessage });
         }
-    }, [currentChatId, setCurrentChat, setMessages, setChats, updateChatTitle, updateMessageVerification, addChat, resetStreamingState]);
+    }, [currentChatId, setCurrentChat, setMessages, setChats, updateChatTitle, updateMessageVerification, addChat, addOptimisticMessage, removeOptimisticMessage, resetStreamingState]);
 
     return {
         // State

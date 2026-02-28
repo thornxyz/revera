@@ -176,50 +176,53 @@ class IngestionService:
                     )
                 )
 
-            # 6. Upsert to Qdrant with retry logic
+            # 6. Upsert to Qdrant with retry logic (parallel batches)
             batch_size = self.settings.qdrant_upsert_batch_size
             if batch_size <= 0:
                 batch_size = len(points)
 
             total_batches = max(1, (len(points) + batch_size - 1) // batch_size)
             logger.info(
-                f"[INGEST] Upserting {len(points)} points to Qdrant in {total_batches} batches"
+                f"[INGEST] Upserting {len(points)} points to Qdrant in {total_batches} parallel batches"
             )
 
-            for batch_index in range(0, len(points), batch_size):
-                batch_number = batch_index // batch_size + 1
+            async def upsert_batch(batch_index: int) -> bool:
                 batch_points = points[batch_index : batch_index + batch_size]
+                batch_number = batch_index // batch_size + 1
                 logger.debug(
                     f"[INGEST] Upserting batch {batch_number}/{total_batches} ({len(batch_points)} points)"
                 )
 
-                # Retry logic for transient failures
                 max_retries = 3
                 for attempt in range(max_retries):
                     try:
-                        self.qdrant.get_client().upsert(
+                        await asyncio.to_thread(
+                            self.qdrant.get_client().upsert,
                             collection_name=self.qdrant.collection_name,
                             points=batch_points,
                         )
-                        break  # Success, exit retry loop
+                        return True
                     except Exception as retry_error:
                         if attempt < max_retries - 1:
-                            wait_time = 2**attempt  # Exponential backoff: 1s, 2s, 4s
+                            wait_time = 2**attempt
                             logger.warning(
                                 f"[INGEST] Retry {attempt + 1}/{max_retries} after {wait_time}s: {retry_error}"
                             )
                             await asyncio.sleep(wait_time)
                         else:
-                            raise  # Final attempt failed, re-raise
+                            raise
+                return False
 
-            logger.info("[INGEST] Upsert complete")
+            batch_tasks = [upsert_batch(i) for i in range(0, len(points), batch_size)]
+            await asyncio.gather(*batch_tasks)
+
+            logger.info("[INGEST] Parallel upsert complete")
             return UUID(hex=document_id)
 
         except Exception as e:
             # Rollback: Delete the orphaned document from Supabase if any processing failed
-            logger.error(f"[INGEST] Processing failed: {e}")
             logger.error(
-                f"[INGEST] Processing failed for document {document_id}, rolling back",
+                f"[INGEST] Processing failed for document {document_id}: {e}",
                 extra={"document_id": document_id, "error": str(e)},
             )
             try:
@@ -231,11 +234,8 @@ class IngestionService:
                 )
             except Exception as rollback_error:
                 logger.error(
-                    f"[INGEST] Failed to rollback document {document_id}",
+                    f"[INGEST] Failed to rollback document {document_id}: {rollback_error}",
                     extra={"rollback_error": str(rollback_error)},
-                )
-                logger.warning(
-                    f"[INGEST] Failed to rollback document {document_id}: {rollback_error}"
                 )
 
             raise
@@ -296,9 +296,12 @@ class IngestionService:
                         }
                     )
 
-                start = end - self.chunk_overlap
-                if start < 0:
-                    start = 0
+                next_start = end - self.chunk_overlap
+                # Guard: always advance by at least 1 to prevent infinite loop
+                # on all-whitespace chunks where end == start after overlap.
+                if next_start <= start:
+                    next_start = start + 1
+                start = next_start
                 if start >= len(text):
                     break
 
@@ -316,8 +319,9 @@ class IngestionService:
         )
 
         if result.data:
-            # Delete from Qdrant
-            self.qdrant.get_client().delete(
+            # Delete from Qdrant (blocking client — run in thread pool)
+            await asyncio.to_thread(
+                self.qdrant.get_client().delete,
                 collection_name=self.qdrant.collection_name,
                 points_selector=models.FilterSelector(
                     filter=models.Filter(

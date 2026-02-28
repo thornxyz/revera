@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { Plus, Trash2, Loader2, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
@@ -14,7 +14,7 @@ import {
     DialogTitle,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { listChats, deleteChat, ChatWithPreview } from "@/lib/api";
+import { listChats, deleteChat, getChatMessages, ChatWithPreview } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useChatStore } from "@/store/chat-store";
 
@@ -29,15 +29,26 @@ export function ChatsSidebar({
     onChatSelect,
     onNewChat,
 }: ChatsSidebarProps) {
-    const { chats, setChats, chatsLoading, setChatsLoading, removeChat } = useChatStore();
+    const { chats, setChats, setChatsLoading, removeChat, setPreloadedMessages, getPreloadedMessages } = useChatStore();
     const [isLoading, setIsLoading] = useState(true);
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [confirmOpen, setConfirmOpen] = useState(false);
     const [pendingDelete, setPendingDelete] = useState<ChatWithPreview | null>(null);
+    
+    // Preload tracking
+    const preloadTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+    const preloadedRef = useRef<Set<string>>(new Set());
 
     useEffect(() => {
         fetchChats();
     }, []); // Only fetch on mount, store handles updates
+
+    // Cleanup preload timeouts on unmount
+    useEffect(() => {
+        return () => {
+            preloadTimeoutRef.current.forEach((timeout) => clearTimeout(timeout));
+        };
+    }, []);
 
     const fetchChats = async () => {
         try {
@@ -51,6 +62,47 @@ export function ChatsSidebar({
             });
         } finally {
             setIsLoading(false);
+        }
+    };
+
+    // Preload messages on hover (200ms delay to avoid unnecessary fetches)
+    const handleMouseEnter = (chatId: string) => {
+        // Skip if already preloaded or currently selected
+        if (preloadedRef.current.has(chatId) || chatId === currentChatId) {
+            return;
+        }
+
+        // Clear any existing timeout for this chat
+        const existingTimeout = preloadTimeoutRef.current.get(chatId);
+        if (existingTimeout) {
+            clearTimeout(existingTimeout);
+        }
+
+        // Set a new timeout to preload after 200ms hover
+        const timeout = setTimeout(async () => {
+            // Check if already in store
+            if (getPreloadedMessages(chatId)) {
+                preloadedRef.current.add(chatId);
+                return;
+            }
+
+            try {
+                const messages = await getChatMessages(chatId);
+                setPreloadedMessages(chatId, messages);
+                preloadedRef.current.add(chatId);
+            } catch (error) {
+                console.debug(`Preload failed for chat ${chatId}:`, error);
+            }
+        }, 200);
+
+        preloadTimeoutRef.current.set(chatId, timeout);
+    };
+
+    const handleMouseLeave = (chatId: string) => {
+        const timeout = preloadTimeoutRef.current.get(chatId);
+        if (timeout) {
+            clearTimeout(timeout);
+            preloadTimeoutRef.current.delete(chatId);
         }
     };
 
@@ -68,6 +120,9 @@ export function ChatsSidebar({
         try {
             await deleteChat(pendingDelete.id);
             removeChat(pendingDelete.id);
+            // Prune local preload tracking set
+            preloadedRef.current.delete(pendingDelete.id);
+            preloadTimeoutRef.current.delete(pendingDelete.id);
             if (currentChatId === pendingDelete.id) {
                 onNewChat();
             }
@@ -118,6 +173,8 @@ export function ChatsSidebar({
                             <div
                                 key={chat.id}
                                 onClick={() => onChatSelect(chat.id)}
+                                onMouseEnter={() => handleMouseEnter(chat.id)}
+                                onMouseLeave={() => handleMouseLeave(chat.id)}
                                 className={cn(
                                     "group flex w-full min-w-0 items-start gap-2 rounded-lg border px-3 py-2.5 cursor-pointer transition-all hover:bg-slate-100",
                                     currentChatId === chat.id
@@ -134,7 +191,7 @@ export function ChatsSidebar({
                                                 currentChatId === chat.id ? "text-emerald-700" : "text-slate-700"
                                             )}
                                         >
-                                            {chat.title}
+                                            {chat.title ?? "Untitled Chat"}
                                         </p>
                                     </div>
                                     {chat.last_message_preview && (
@@ -156,6 +213,7 @@ export function ChatsSidebar({
                                     <Button
                                         variant="ghost"
                                         size="icon"
+                                        aria-label={`Delete chat "${chat.title ?? "Untitled Chat"}"`}
                                         className="h-7 w-7 text-slate-400 hover:text-rose-500 hover:bg-rose-50"
                                         onClick={(e) => requestDelete(e, chat)}
                                     >

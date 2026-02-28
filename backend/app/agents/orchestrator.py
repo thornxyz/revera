@@ -10,7 +10,9 @@ from app.agents.graph_builder import compile_research_graph
 from app.agents.graph_state import ImageContextState, ResearchState
 from app.core.database import get_supabase_client
 from app.core.utils import sanitize_for_postgres
-from app.services.agent_memory import get_agent_memory_service
+from app.services.agent_memory import AgentMemoryService, get_agent_memory_service
+from app.services.background_critic import spawn_critic_task
+from app.services.title_generator import generate_title_from_query
 
 logger = logging.getLogger(__name__)
 
@@ -41,34 +43,41 @@ class Orchestrator:
     - State-based architecture for better observability
     """
 
-    def __init__(self, user_id: str):
+    def __init__(self, user_id: str, async_critic: bool = True):
         self.user_id = user_id
-        logger.info(f"[ORCH] Initializing LangGraph orchestrator for user: {user_id}")
+        self.async_critic = async_critic
+        logger.info(
+            f"[ORCH] Initializing LangGraph orchestrator for user: {user_id} (async_critic={async_critic})"
+        )
         self.supabase = get_supabase_client()
 
         # Compile the research graph once at initialization
-        self.graph = compile_research_graph()
+        self.graph = compile_research_graph(async_critic=async_critic)
         logger.info("[ORCH] LangGraph workflow compiled and ready")
 
     def _log_agent_timeline(self, session_id: str, timeline: list[dict]):
-        """Log all agent executions to database."""
-        for entry in timeline:
-            try:
-                self.supabase.table("agent_logs").insert(
-                    {
-                        "session_id": session_id,
-                        "agent_name": entry.get("agent_name"),
-                        "events": {
-                            "result_summary": str(entry.get("result", ""))[:500],
-                            "metadata": entry.get("metadata", {}),
-                        },
-                        "latency_ms": entry.get("latency_ms", 0),
-                    }
-                ).execute()
-            except Exception as e:
-                logger.warning(
-                    f"[ORCH] Failed to log agent {entry.get('agent_name')}: {e}"
-                )
+        """Log all agent executions to database in a single batch insert."""
+        if not timeline:
+            return
+
+        log_entries = [
+            {
+                "session_id": session_id,
+                "agent_name": entry.get("agent_name"),
+                "events": {
+                    "result_summary": str(entry.get("result", ""))[:500],
+                    "metadata": entry.get("metadata", {}),
+                },
+                "latency_ms": entry.get("latency_ms", 0),
+            }
+            for entry in timeline
+        ]
+
+        try:
+            self.supabase.table("agent_logs").insert(log_entries).execute()
+            logger.info(f"[ORCH] Batch inserted {len(log_entries)} agent logs")
+        except Exception as e:
+            logger.warning(f"[ORCH] Failed to batch insert agent logs: {e}")
 
     @staticmethod
     def _normalize_sources(
@@ -120,7 +129,9 @@ class Orchestrator:
 
         # --- Pre-graph setup (memory, doc validation, session row) ---
 
-        memory_service = get_agent_memory_service()
+        memory_service = (
+            get_agent_memory_service()
+        )  # reused below in _store_agent_memories via same singleton
         memory_context = await memory_service.build_memory_context(
             user_id=UUID(self.user_id),
             chat_id=chat_id,
@@ -247,7 +258,7 @@ class Orchestrator:
                 # Node lifecycle: started
                 if kind == "on_chain_start" and name in known_nodes:
                     yield {
-                        "type": "node_complete",
+                        "type": "node_started",
                         "node": name,
                         "status": "running",
                     }
@@ -286,11 +297,6 @@ class Orchestrator:
                             "type": "thought_chunk",
                             "content": event["data"].get("content", ""),
                         }
-                    elif name == "sources":
-                        yield {
-                            "type": "sources",
-                            "sources": event["data"].get("sources", []),
-                        }
                     elif name == "quick_answer":
                         yield {
                             "type": "quick_answer",
@@ -305,10 +311,14 @@ class Orchestrator:
 
             total_latency = int((time.perf_counter() - start_time) * 1000)
 
-            # Determine confidence from real verification result
-            confidence = "unknown"
-            if verification:
+            # Determine confidence - use "pending" for async critic mode
+            if self.async_critic:
+                confidence = "pending"
+                verification = None
+            elif verification:
                 confidence = verification.get("verification_status", "unknown")
+            else:
+                confidence = "unknown"
 
             # Store agent memories
             logger.info("[ORCH] Storing agent memories...")
@@ -317,6 +327,7 @@ class Orchestrator:
                     chat_id=chat_id,
                     session_id=session_id,
                     agent_timeline=agent_timeline,
+                    memory_service=memory_service,
                 )
                 logger.info("[ORCH] Agent memories stored successfully")
             except Exception as mem_err:
@@ -326,7 +337,12 @@ class Orchestrator:
                 )
 
             # Store semantic memory (learned facts) for future sessions
-            if verification and confidence in ["verified", "high"]:
+            # Skip for async critic mode since we don't have verification yet
+            if (
+                not self.async_critic
+                and verification
+                and confidence in ["verified", "high"]
+            ):
                 try:
                     # Track which sources provided verified information
                     effective_sources = []
@@ -388,9 +404,26 @@ class Orchestrator:
 
             self._log_agent_timeline(session_id, agent_timeline)
 
-            # Update chat title if it's new or Untitled
-            from app.services.title_generator import generate_title_from_query
+            # Spawn background critic task if async mode
+            if self.async_critic and synthesis_result:
+                logger.info(
+                    f"[ORCH] Spawning background critic task for session {session_id}"
+                )
+                spawn_critic_task(
+                    session_id=session_id,
+                    chat_id=chat_id,
+                    message_id=session_id,  # session_id is used as message_id
+                    query=query,
+                    synthesis_result=synthesis_result,
+                    internal_sources=internal_sources,
+                    web_sources=web_sources,
+                )
+                yield {
+                    "type": "verification_pending",
+                    "session_id": session_id,
+                }
 
+            # Update chat title if it's new or Untitled
             try:
                 # Get current title to see if we should update it
                 chat_data = (
@@ -466,9 +499,11 @@ class Orchestrator:
         chat_id: UUID,
         session_id: str,
         agent_timeline: list[dict],
+        memory_service: AgentMemoryService | None = None,
     ):
         """Store agent execution states as memories in Store."""
-        memory_service = get_agent_memory_service()
+        if memory_service is None:
+            memory_service = get_agent_memory_service()
         message_id = UUID(session_id)  # Use session_id as message_id
 
         for entry in agent_timeline:

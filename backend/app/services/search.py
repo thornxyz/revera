@@ -11,6 +11,7 @@ from qdrant_client import models
 
 from app.core.config import get_settings
 from app.core.qdrant import get_qdrant_service
+from app.core.cache import get_embedding_cache
 from app.llm.gemini import get_gemini_client
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ class HybridSearchService:
     def __init__(self):
         self.qdrant = get_qdrant_service()
         self.gemini = get_gemini_client()
+        self.embedding_cache = get_embedding_cache()
 
         settings = get_settings()
         # Initialize Local Models for Query Embedding
@@ -58,6 +60,31 @@ class HybridSearchService:
             cache_dir=settings.model_cache_dir,
         )
 
+    def _get_cached_dense_embedding(self, query: str) -> list[float]:
+        """Get dense embedding from cache or generate and cache it."""
+        cache_key = self.embedding_cache.generate_key("dense", query)
+        cached = self.embedding_cache.get(cache_key)
+        if cached is not None:
+            logger.debug("[SEARCH] Cache hit for dense embedding")
+            return cached[0]
+
+        embedding = self.gemini.embed_text(query)
+        self.embedding_cache.set(cache_key, [embedding], ttl=900.0)  # 15 min
+        return embedding
+
+    async def _get_cached_dense_embedding_async(self, query: str) -> list[float]:
+        """Async version of dense embedding with cache."""
+        cache_key = self.embedding_cache.generate_key("dense", query)
+        cached = self.embedding_cache.get(cache_key)
+        if cached is not None:
+            logger.debug("[SEARCH] Cache hit for dense embedding")
+            return cached[0]
+
+        embeddings = await self.gemini.embed_texts_async([query])
+        embedding = embeddings[0]
+        self.embedding_cache.set(cache_key, [embedding], ttl=900.0)  # 15 min
+        return embedding
+
     async def search(
         self,
         query: str,
@@ -68,20 +95,23 @@ class HybridSearchService:
         """
         Perform 3-way hybrid search using Qdrant.
         """
-        # 1. Generate Query Embeddings
-        # A. Dense (Gemini)
-        dense_query = self.gemini.embed_text(query)
+        # 1. Generate Query Embeddings (all async / thread-offloaded)
+        # A. Dense (Gemini) - with async caching
+        dense_query = await self._get_cached_dense_embedding_async(query)
 
-        # B. Sparse (BM25)
-        # fastembed returns generator
-        sparse_gen = list(self.sparse_model.query_embed(query))[0]
+        # B. Sparse (BM25) — CPU-bound, run in thread pool
+        sparse_gen = await asyncio.to_thread(
+            lambda: list(self.sparse_model.query_embed(query))[0]
+        )
         sparse_query = models.SparseVector(
             indices=sparse_gen.indices.tolist(),
             values=sparse_gen.values.tolist(),
         )
 
-        # C. Late Interaction (ColBERT)
-        colbert_gen = list(self.colbert_model.query_embed(query))[0]
+        # C. Late Interaction (ColBERT) — CPU-bound, run in thread pool
+        colbert_gen = await asyncio.to_thread(
+            lambda: list(self.colbert_model.query_embed(query))[0]
+        )
         # Ensure it's a list of vectors for ColBERT (Multi-Vector)
         colbert_query = (
             colbert_gen.tolist() if hasattr(colbert_gen, "tolist") else colbert_gen
@@ -138,7 +168,8 @@ class HybridSearchService:
             ),
         ]
 
-        results = self.qdrant.get_client().query_points(
+        results = await asyncio.to_thread(
+            self.qdrant.get_client().query_points,
             collection_name=self.qdrant.collection_name,
             prefetch=prefetch,
             query=colbert_query,
@@ -219,9 +250,9 @@ Output only the rewritten query, nothing else."""
         if rewrite_query:
             search_query = await self.rewrite_query_for_retrieval(query)
 
-        # Generate query embeddings in parallel
+        # Generate query embeddings in parallel (with caching)
         async def get_dense_embedding():
-            return self.gemini.embed_text(search_query)
+            return await self._get_cached_dense_embedding_async(search_query)
 
         async def get_sparse_embedding():
             sparse_gen = await asyncio.to_thread(
@@ -261,25 +292,27 @@ Output only the rewritten query, nothing else."""
             )
         filter_ = models.Filter(must=must_conditions)
 
-        # Execute separate searches for RRF
+        # Execute separate searches for RRF (blocking client — offload to thread pool)
         candidate_limit = top_k * 3  # Get more candidates for fusion
 
-        # Dense search
-        dense_results = self.qdrant.get_client().query_points(
-            collection_name=self.qdrant.collection_name,
-            query=dense_query,
-            using="dense",
-            query_filter=filter_,
-            limit=candidate_limit,
-        )
-
-        # Sparse search
-        sparse_results = self.qdrant.get_client().query_points(
-            collection_name=self.qdrant.collection_name,
-            query=sparse_query,
-            using="sparse",
-            query_filter=filter_,
-            limit=candidate_limit,
+        # Dense search and sparse search in parallel
+        dense_results, sparse_results = await asyncio.gather(
+            asyncio.to_thread(
+                self.qdrant.get_client().query_points,
+                collection_name=self.qdrant.collection_name,
+                query=dense_query,
+                using="dense",
+                query_filter=filter_,
+                limit=candidate_limit,
+            ),
+            asyncio.to_thread(
+                self.qdrant.get_client().query_points,
+                collection_name=self.qdrant.collection_name,
+                query=sparse_query,
+                using="sparse",
+                query_filter=filter_,
+                limit=candidate_limit,
+            ),
         )
 
         # Apply RRF fusion

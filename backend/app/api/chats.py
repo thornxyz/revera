@@ -523,10 +523,9 @@ async def send_chat_query_stream(
     try:
         supabase = get_supabase_client()
 
-        # Verify chat ownership
         chat_response = (
             supabase.table("chats")
-            .select("*")
+            .select("id, thread_id, user_id")
             .eq("id", chat_id)
             .eq("user_id", user_id)
             .single()
@@ -542,8 +541,6 @@ async def send_chat_query_stream(
         chat = chat_response.data
         thread_id = str(chat.get("thread_id")) if chat.get("thread_id") else None
 
-        logger.info(f"[CHAT_STREAM] Chat verified: thread_id={thread_id}")
-
         if not thread_id:
             thread_id = f"chat-{chat_id}"
             logger.info(
@@ -553,10 +550,17 @@ async def send_chat_query_stream(
                 "id", chat_id
             ).execute()
 
+        logger.info(f"[CHAT_STREAM] Chat verified: thread_id={thread_id}")
+
         async def event_generator():
             """Generate SSE events for the research stream."""
             sem = _user_stream_semaphores[user_id]
-            if not sem._value:  # noqa: SLF001  — zero permits available
+            # Non-blocking acquire to check capacity.
+            # timeout must be > 0 so the event loop gets at least one tick
+            # to run the acquire coroutine (timeout=0 cancels before it runs).
+            try:
+                await asyncio.wait_for(sem.acquire(), timeout=0.01)
+            except asyncio.TimeoutError:
                 logger.warning(
                     f"[CHAT_STREAM] Too many concurrent streams for user_id={user_id}"
                 )
@@ -573,7 +577,8 @@ async def send_chat_query_stream(
                 )
                 return
 
-            async with sem:
+            # Semaphore was acquired above — release it when the stream ends.
+            try:
                 try:
                     logger.info(
                         f"[CHAT_STREAM] Starting orchestrator for thread_id={thread_id}"
@@ -601,7 +606,7 @@ async def send_chat_query_stream(
                             message_id_from_orch = event.get("message_id")
                             yield f"event: message_id\ndata: {json.dumps({'message_id': message_id_from_orch})}\n\n"
 
-                        elif event_type == "node_complete":
+                        elif event_type in ("node_started", "node_complete"):
                             yield f"event: agent_status\ndata: {json.dumps({'node': event.get('node'), 'status': event.get('status', 'complete')})}\n\n"
 
                         elif event_type == "answer_chunk":
@@ -622,6 +627,9 @@ async def send_chat_query_stream(
 
                         elif event_type == "title_updated":
                             yield f"event: title_updated\ndata: {json.dumps({'title': event.get('title'), 'chat_id': event.get('chat_id')})}\n\n"
+
+                        elif event_type == "verification_pending":
+                            yield f"event: verification_pending\ndata: {json.dumps({'session_id': event.get('session_id')})}\n\n"
 
                         elif event_type == "error":
                             yield f"event: error\ndata: {json.dumps({'message': event.get('message', 'Unknown error')})}\n\n"
@@ -723,6 +731,9 @@ async def send_chat_query_stream(
                             "recoverable": True,
                         }
                     yield f"event: error\ndata: {json.dumps(error_payload)}\n\n"
+
+            finally:
+                sem.release()
 
         return StreamingResponse(
             event_generator(),

@@ -80,10 +80,32 @@ async def retrieval_node(state: ResearchState, config: RunnableConfig) -> dict:
 
     Dispatches a 'sources' custom event after search completes.
     Returns updates to state including internal_sources and timeline entry.
+
+    Degrades gracefully: if Qdrant / embedding service is unreachable the
+    node returns empty sources so the rest of the pipeline can still run.
     """
     logger.info("[GRAPH] Retrieval node executing...")
+    start_time = time.perf_counter()
 
-    retrieval = RetrievalAgent(state["user_id"])
+    try:
+        retrieval = RetrievalAgent(state["user_id"])
+    except Exception as e:
+        # Qdrant connection check in __init__ can fail (DNS, network, auth)
+        latency = int((time.perf_counter() - start_time) * 1000)
+        logger.error(
+            f"[GRAPH] Retrieval agent init failed ({latency}ms), "
+            f"degrading to empty sources: {e}"
+        )
+        return {
+            "internal_sources": [],
+            "agent_timeline": [
+                {
+                    "agent_name": "retrieval",
+                    "result": {"error": str(e), "degraded": True},
+                    "latency_ms": latency,
+                }
+            ],
+        }
 
     memory_prompt = _get_memory_prompt(state, "retrieval")
 
@@ -113,7 +135,24 @@ async def retrieval_node(state: ResearchState, config: RunnableConfig) -> dict:
         constraints=constraints,
     )
 
-    output = await retrieval.run(agent_input)
+    try:
+        output = await retrieval.run(agent_input)
+    except Exception as e:
+        latency = int((time.perf_counter() - start_time) * 1000)
+        logger.error(
+            f"[GRAPH] Retrieval search failed ({latency}ms), "
+            f"degrading to empty sources: {e}"
+        )
+        return {
+            "internal_sources": [],
+            "agent_timeline": [
+                {
+                    "agent_name": "retrieval",
+                    "result": {"error": str(e), "degraded": True},
+                    "latency_ms": latency,
+                }
+            ],
+        }
 
     logger.info(f"[GRAPH] Retrieved {len(output.result)} sources")
 
@@ -139,6 +178,9 @@ async def web_search_node(state: ResearchState, config: RunnableConfig) -> dict:
     is disabled or not needed by the plan. This enables parallel
     fan-out from planning (retrieval + web_search run concurrently).
 
+    Degrades gracefully: if Tavily / network is unreachable the node
+    returns empty sources so the rest of the pipeline can still run.
+
     Dispatches a 'sources' custom event after search completes.
     Returns updates to state including web_sources and timeline entry.
     """
@@ -153,6 +195,7 @@ async def web_search_node(state: ResearchState, config: RunnableConfig) -> dict:
         return {"web_sources": [], "agent_timeline": []}
 
     logger.info("[GRAPH] Web search node executing...")
+    start_time = time.perf_counter()
 
     web_search = WebSearchAgent()
 
@@ -177,7 +220,24 @@ async def web_search_node(state: ResearchState, config: RunnableConfig) -> dict:
         constraints=constraints,
     )
 
-    output = await web_search.run(agent_input)
+    try:
+        output = await web_search.run(agent_input)
+    except Exception as e:
+        latency = int((time.perf_counter() - start_time) * 1000)
+        logger.error(
+            f"[GRAPH] Web search failed ({latency}ms), degrading to empty sources: {e}"
+        )
+        return {
+            "web_sources": [],
+            "tavily_answer": None,
+            "agent_timeline": [
+                {
+                    "agent_name": "web_search",
+                    "result": {"error": str(e), "degraded": True},
+                    "latency_ms": latency,
+                }
+            ],
+        }
 
     logger.info(f"[GRAPH] Found {len(output.result)} web sources")
 
@@ -223,6 +283,8 @@ async def image_gen_node(state: ResearchState, config: RunnableConfig) -> dict:
     if not plan or not any(step.tool == "image_gen" for step in plan.steps):
         logger.info("[GRAPH] Plan does not include image_gen, skipping")
         return {
+            "generated_image_url": None,
+            "generated_image_storage_path": None,
             "agent_timeline": [],
         }
 

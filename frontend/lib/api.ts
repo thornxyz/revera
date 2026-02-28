@@ -114,8 +114,8 @@ export async function deleteDocument(documentId: string): Promise<void> {
 export interface Chat {
     id: string;
     user_id: string;
-    title: string;
-    thread_id: string;
+    title: string | null;
+    thread_id: string | null;
     created_at: string;
     updated_at: string;
 }
@@ -128,14 +128,15 @@ export interface ChatWithPreview extends Chat {
 export interface Message {
     id: string;
     chat_id: string;
-    user_id: string;
+    session_id?: string | null;
+    role: string;
     query: string;
-    answer: string;
-    thinking?: string;
+    answer: string | null;
+    thinking?: string | null;
     agent_timeline?: AgentStep[];
     sources: Source[];
-    verification: Verification;
-    confidence: string;
+    verification: Verification | null;
+    confidence: string | null;
     created_at: string;
 }
 
@@ -223,6 +224,7 @@ export async function getChatMessages(chatId: string): Promise<Message[]> {
 export interface ChatStreamingCallbacks extends StreamingCallbacks {
     onMessageId?: (messageId: string) => void;
     onTitleUpdated?: (title: string, chatId: string) => void;
+    onVerificationPending?: (sessionId: string) => void;
 }
 
 export async function sendChatMessageStream(
@@ -307,6 +309,10 @@ export async function sendChatMessageStream(
                                 if (DEBUG) console.log(`[API] Title updated: ${data.title} for chat ${data.chat_id}`);
                                 callbacks?.onTitleUpdated?.(data.title, data.chat_id);
                                 break;
+                            case "verification_pending":
+                                if (DEBUG) console.log(`[API] Verification pending for session: ${data.session_id}`);
+                                callbacks?.onVerificationPending?.(data.session_id);
+                                break;
                             case "complete":
                                 await callbacks?.onComplete?.(data);
                                 streamCompleted = true;
@@ -338,7 +344,7 @@ export async function sendChatMessageStream(
 
 /**
  * Poll for verification status with exponential backoff.
- * No timeout - polls indefinitely until verification completes.
+ * Has a maximum timeout of 5 minutes to prevent indefinite polling.
  */
 export async function pollVerificationStatus(
     chatId: string,
@@ -349,11 +355,20 @@ export async function pollVerificationStatus(
     let attempt = 0;
     let delay = 2000;  // Start with 2s
     const maxDelay = 10000;  // Cap at 10s
+    const maxAttempts = 30;  // Max 30 attempts (~5 minutes with backoff)
+    const startTime = Date.now();
+    const maxDuration = 5 * 60 * 1000;  // 5 minutes max
 
     const poll = async () => {
         // Check if aborted before making request
         if (signal?.aborted) {
             return true;  // Stop polling
+        }
+
+        // Check timeout
+        if (Date.now() - startTime > maxDuration) {
+            console.warn(`[Polling] Max duration (5 min) exceeded, stopping`);
+            return true;
         }
 
         try {
@@ -389,8 +404,8 @@ export async function pollVerificationStatus(
         }
     };
 
-    // Infinite polling loop with exponential backoff
-    while (true) {
+    // Polling loop with exponential backoff and max attempts
+    while (attempt < maxAttempts) {
         const done = await poll();
 
         if (done) {
@@ -398,18 +413,21 @@ export async function pollVerificationStatus(
             return;
         }
 
-        // Wait before next poll
-        await new Promise(resolve => setTimeout(resolve, delay));
+        attempt++;
 
         // Exponential backoff: 2s → 4s → 8s → 10s (capped)
-        attempt++;
-        if (attempt < 3) {  // First 3 attempts use exponential backoff
+        if (attempt <= 3) {
             delay = Math.min(delay * 2, maxDelay);
         }
-        // After that, stay at maxDelay (10s between polls)
+        // After attempt 3, stay at maxDelay (10s between polls)
 
         if (DEBUG) console.log(`[Polling] Verification still pending, retry in ${delay / 1000}s (attempt ${attempt + 1})`);
+
+        // Wait before next poll
+        await new Promise(resolve => setTimeout(resolve, delay));
     }
+
+    console.warn(`[Polling] Max attempts (${maxAttempts}) reached, stopping`);
 }
 
 
