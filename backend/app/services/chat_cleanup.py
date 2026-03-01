@@ -9,6 +9,7 @@ from qdrant_client import models
 from app.core.database import get_supabase_client
 from app.core.memory_store import get_memory_store
 from app.core.qdrant import get_qdrant_service
+from app.core.supabase_memory_store import SupabaseMemoryStore
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ class ChatCleanupService:
     Handles comprehensive deletion of chat and all associated data.
 
     Deletion Order (children before parents):
-    1. Agent memories (InMemoryStore - episodic/semantic)
+    1. Agent memories (Supabase agent_memory table - episodic/semantic)
     2. Document embeddings (Qdrant vectors filtered by chat_id)
     3. Documents (embeddings cascade delete via Qdrant)
     4. Agent logs (cascade from research_sessions)
@@ -30,7 +31,12 @@ class ChatCleanupService:
     def __init__(self):
         self.supabase = get_supabase_client()
         self.qdrant = get_qdrant_service()
-        self.memory_store = get_memory_store()
+        store = get_memory_store()
+        if isinstance(store, SupabaseMemoryStore):
+            self.memory_store: SupabaseMemoryStore = store
+        else:
+            # Fallback: wrap non-Supabase stores (shouldn't happen in prod)
+            self.memory_store = SupabaseMemoryStore()
 
     async def delete_chat_completely(self, chat_id: str, user_id: str) -> dict:
         """
@@ -113,45 +119,21 @@ class ChatCleanupService:
 
     async def _delete_agent_memories(self, user_id: str, chat_id: str) -> int:
         """
-        Delete all agent memories for this chat from InMemoryStore.
+        Delete all agent memories for this chat from Supabase agent_memory table.
 
-        Memory namespaces:
+        Uses bulk delete by namespace prefix (user_id + chat_id), which covers:
         - Episodic: (user_id, chat_id, "episodic", agent_name)
         - Semantic: (user_id, chat_id, "semantic")
         """
-        deleted_count = 0
-        agents = ["planner", "retrieval", "synthesis", "critic"]
-
         try:
-            # Delete episodic memories for each agent
-            for agent in agents:
-                namespace = (str(user_id), str(chat_id), "episodic", agent)
-                try:
-                    # Search for all items in this namespace
-                    items = self.memory_store.search(namespace, limit=1000)
-                    for item in items:
-                        self.memory_store.delete(namespace, item.key)
-                        deleted_count += 1
-                except Exception as e:
-                    logger.warning(
-                        f"[CLEANUP] Failed to delete episodic memories for {agent}: {e}"
-                    )
-
-            # Delete semantic memories
-            semantic_namespace = (str(user_id), str(chat_id), "semantic")
-            try:
-                items = self.memory_store.search(semantic_namespace, limit=1000)
-                for item in items:
-                    self.memory_store.delete(semantic_namespace, item.key)
-                    deleted_count += 1
-            except Exception as e:
-                logger.warning(f"[CLEANUP] Failed to delete semantic memories: {e}")
-
+            deleted_count = self.memory_store.delete_by_namespace_prefix(
+                user_id, chat_id
+            )
             logger.info(f"[CLEANUP] Deleted {deleted_count} agent memories")
+            return deleted_count
         except Exception as e:
             logger.error(f"[CLEANUP] Error deleting agent memories: {e}", exc_info=True)
-
-        return deleted_count
+            return 0
 
     async def _delete_document_embeddings(self, chat_id: str) -> int:
         """

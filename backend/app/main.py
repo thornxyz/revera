@@ -84,8 +84,22 @@ async def lifespan(_: FastAPI):
     """Initialize services on application startup."""
     logger.info("[STARTUP] Initializing Revera services...")
 
+    # Initialize LangGraph checkpointer (creates pool + tables if DB URL set)
+    from app.core.checkpointer import get_checkpointer, close_checkpointer
+
+    checkpointer = await get_checkpointer()
+    if checkpointer:
+        logger.info("[STARTUP] LangGraph checkpointer ready")
+    else:
+        logger.warning("[STARTUP] LangGraph checkpointer not available")
+
     logger.info("[STARTUP] Revera services initialized successfully")
     yield
+
+    # Shutdown: close checkpointer connection pool
+    logger.info("[SHUTDOWN] Closing Revera services...")
+    await close_checkpointer()
+    logger.info("[SHUTDOWN] Revera services closed")
 
 
 app = FastAPI(

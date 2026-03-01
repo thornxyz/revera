@@ -54,31 +54,24 @@ flowchart TB
 
 ## Key Features
 
-- **🔍 Triple Hybrid RAG**: Dense + Sparse + ColBERT retrieval with RRF for extreme precision across chat-scoped documents and live web search.
-- **🧠 Thinking & Vision**: Real-time reasoning streams with native multimodal support; analyze uploaded images or let the agent generate visualizations.
-- **🤖 Parallel Orchestration**: LangGraph-powered multi-agent workflow with concurrent tool execution (~3x speedup) and iterative critic refinement.
-- **📊 60fps Streaming UX**: Lag-free SSE architecture with frame-based buffering and segmented markdown rendering (memoized for 10k+ char reports).
-- **🏷️ Contextual Memory**: Persistent episodic context with smart auto-titling and comprehensive cascade cleanup on deletion.
-- **🔐 Secure & Modern**: Built with Next.js 16, Google OAuth (Supabase), and Zustand for robust state management.
+- **🔍 Triple Hybrid RAG**: Dense + Sparse + ColBERT retrieval with Reciprocal Rank Fusion for high-precision grounding.
+- **🤖 Multi-Agent Research Flow**: Planner, retrieval, web search, synthesis, and critic agents orchestrated with LangGraph.
+- **🌐 Web + Document Intelligence**: Combines uploaded PDFs/images with live Tavily search in a single answer pipeline.
+- **🧠 Streaming Thinking UX**: Real-time SSE streaming for answer text, agent status, reasoning traces, and sources.
+- **🎨 Multimodal Capabilities**: Vision-based image understanding and planner-driven image generation via Gemini.
+- **🗂️ Persistent Chat Workspace**: Chat-scoped memory, auto titles, and full session history with source traceability.
 
 ## Tech Stack
 
 | Component | Technology |
 |-----------|-----------|
-| **Frontend** | Next.js 16, React 19, TypeScript, Tailwind CSS v4, shadcn/ui |
-| **Markdown** | Streamdown (streaming-optimized), @streamdown/code, @streamdown/math (KaTeX) |
-| **State Management** | Zustand (chat store), Custom hooks (streaming, UI) |
+| **Frontend** | Next.js 16, React 19, TypeScript, Tailwind CSS |
 | **Backend** | FastAPI, Python 3.12+, asyncio |
-| **Orchestration** | LangGraph (state-based agent workflow with parallel fan-out) |
-| **Vector Database** | Qdrant (Triple Hybrid: Dense + Sparse + ColBERT) |
-| **Agent Memory** | LangGraph InMemoryStore (episodic/semantic memory) |
-| **Embeddings** | Gemini 3 (3072d dense), FastEmbed (BM25, ColBERT) |
-| **LLM** | Gemini 3 Flash Preview (with native thinking mode) |
-| **Image Generation** | Gemini 2.5 Flash Image (text-to-image, planner-driven) |
+| **Agent Orchestration** | LangGraph |
+| **Retrieval** | Qdrant + FastEmbed (Dense, BM25, ColBERT) |
+| **LLM / Vision / Image** | Gemini models |
 | **Web Search** | Tavily API |
-| **Auth & Metadata** | Supabase (PostgreSQL, JWT) |
-| **Storage** | Supabase Storage (PDFs, images, generated images) |
-| **UI Components** | shadcn/ui, Radix UI, lucide-react icons |
+| **Auth + Data + Storage** | Supabase |
 
 ### Backend Setup
 
@@ -116,11 +109,14 @@ pnpm dev
 ```
 # Application
 DEBUG=false
+CORS_ORIGINS=http://localhost:3000
 
 # Supabase
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your-anon-key
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+
+SUPABASE_DB_URL=connection-string
 
 # Google Gemini
 GEMINI_API_KEY=your-gemini-api-key
@@ -132,7 +128,6 @@ TAVILY_API_KEY=your-tavily-api-key
 QDRANT_URL=https://your-cluster.qdrant.tech
 QDRANT_API_KEY=your-qdrant-api-key
 QDRANT_UPSERT_BATCH_SIZE=50
-
 ```
 
 **Frontend (.env.local)**:

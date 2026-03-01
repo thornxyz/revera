@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from app.agents.graph_builder import compile_research_graph
 from app.agents.graph_state import ImageContextState, ResearchState
+from app.core.checkpointer import get_checkpointer
 from app.core.database import get_supabase_client
 from app.core.utils import sanitize_for_postgres
 from app.services.agent_memory import AgentMemoryService, get_agent_memory_service
@@ -51,9 +52,23 @@ class Orchestrator:
         )
         self.supabase = get_supabase_client()
 
-        # Compile the research graph once at initialization
-        self.graph = compile_research_graph(async_critic=async_critic)
+        # Graph compilation is deferred to _ensure_graph() because the
+        # checkpointer requires async initialisation.
+        self._graph = None
+        logger.info("[ORCH] LangGraph orchestrator ready (graph compiled lazily)")
+
+    async def _ensure_graph(self):
+        """Compile the research graph lazily, injecting the checkpointer."""
+        if self._graph is not None:
+            return self._graph
+
+        checkpointer = await get_checkpointer()
+        self._graph = compile_research_graph(
+            async_critic=self.async_critic,
+            checkpointer=checkpointer,
+        )
         logger.info("[ORCH] LangGraph workflow compiled and ready")
+        return self._graph
 
     def _log_agent_timeline(self, session_id: str, timeline: list[dict]):
         """Log all agent executions to database in a single batch insert."""
@@ -201,6 +216,10 @@ class Orchestrator:
         yield {"type": "message_id", "message_id": session_id}
 
         # --- Build initial state for LangGraph ---
+        # NOTE: When a checkpointer is active, LangGraph loads previous state
+        # for the same thread_id and merges it with initial_state. We must
+        # explicitly set ALL per-turn fields here so stale values from prior
+        # turns (e.g. old synthesis_result, iteration_count) are reset.
 
         initial_state: ResearchState = {
             "query": query,
@@ -245,9 +264,10 @@ class Orchestrator:
         try:
             # --- Stream the LangGraph graph ---
 
+            graph = await self._ensure_graph()
             config: dict = {"configurable": {"thread_id": thread_id}}
 
-            async for event in self.graph.astream_events(
+            async for event in graph.astream_events(
                 initial_state,
                 version="v2",
                 config=config,  # type: ignore[arg-type]

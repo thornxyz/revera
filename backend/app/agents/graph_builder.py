@@ -1,6 +1,8 @@
 """LangGraph workflow for research orchestration."""
 
 import logging
+from typing import Any
+
 from langgraph.graph import StateGraph, END
 
 from app.agents.graph_state import ResearchState
@@ -98,16 +100,25 @@ def build_research_graph(async_critic: bool = False) -> StateGraph:
     return workflow
 
 
-def compile_research_graph(async_critic: bool = False):
+def compile_research_graph(
+    async_critic: bool = False,
+    checkpointer: Any = None,
+):
     """
     Compile the research graph into an executable workflow.
 
     Args:
         async_critic: If True, skip critic in graph for background execution
+        checkpointer: Optional LangGraph checkpointer for state persistence.
+                      When provided, graph state is saved per thread_id,
+                      enabling multi-turn conversations to survive restarts.
 
     Returns a compiled graph that can be invoked with initial state.
     """
     workflow = build_research_graph(async_critic=async_critic)
-    compiled = workflow.compile()
-    logger.info(f"[GRAPH] Research graph compiled (async_critic={async_critic})")
+    compiled = workflow.compile(checkpointer=checkpointer)
+    logger.info(
+        f"[GRAPH] Research graph compiled (async_critic={async_critic}, "
+        f"checkpointer={'enabled' if checkpointer else 'disabled'})"
+    )
     return compiled

@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_anon_key: str = ""
     supabase_service_role_key: str = ""
+    supabase_db_url: str = (
+        ""  # Direct Postgres connection string for LangGraph checkpointer
+    )
 
     # Google Gemini
     gemini_api_key: str = ""

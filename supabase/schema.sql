@@ -66,6 +66,19 @@ CREATE TABLE agent_logs (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- Agent memory: LangGraph BaseStore persistence (JSONB, no pgvector)
+-- Stores agent execution states, semantic memories, and learned facts
+-- keyed by (namespace, key) for efficient lookup.
+CREATE TABLE agent_memory (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    namespace TEXT[] NOT NULL,           -- Hierarchical namespace e.g. ['user_id', 'chat_id', 'agent']
+    key TEXT NOT NULL,                   -- Unique key within namespace
+    value JSONB NOT NULL DEFAULT '{}',   -- Memory payload
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (namespace, key)
+);
+
 -- ============================================
 -- INDEXES
 -- ============================================
@@ -80,6 +93,8 @@ CREATE INDEX idx_research_sessions_thread_id ON research_sessions(thread_id);
 CREATE INDEX idx_messages_chat_id ON messages(chat_id);
 CREATE INDEX idx_messages_created_at ON messages(created_at);
 CREATE INDEX idx_agent_logs_session_id ON agent_logs(session_id);
+CREATE INDEX idx_agent_memory_namespace ON agent_memory USING GIN (namespace);
+CREATE INDEX idx_agent_memory_key ON agent_memory(key);
 
 -- ============================================
 -- ROW LEVEL SECURITY
@@ -89,6 +104,11 @@ ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE research_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_memory ENABLE ROW LEVEL SECURITY;
+
+-- Agent memory: service role only (accessed by backend, not directly by users)
+CREATE POLICY "Service role full access to agent_memory" ON agent_memory
+    FOR ALL USING (true);
 
 -- Chats: users can only access their own
 CREATE POLICY "Users can view own chats" ON chats
@@ -159,6 +179,20 @@ AFTER INSERT ON messages
 FOR EACH ROW
 EXECUTE FUNCTION update_chat_timestamp();
 
+-- Function to auto-update agent_memory.updated_at on modification
+CREATE OR REPLACE FUNCTION update_agent_memory_timestamp()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_update_agent_memory_timestamp
+BEFORE UPDATE ON agent_memory
+FOR EACH ROW
+EXECUTE FUNCTION update_agent_memory_timestamp();
+
 -- Function to get chats with message count and preview (optimized for single query)
 CREATE OR REPLACE FUNCTION get_chats_with_preview(p_user_id UUID)
 RETURNS TABLE (
@@ -212,3 +246,4 @@ COMMENT ON COLUMN documents.chat_id IS 'Documents are now scoped to specific cha
 COMMENT ON COLUMN research_sessions.chat_id IS 'Links session to parent chat for backward tracking';
 COMMENT ON POLICY "Service role can update message verification" ON messages IS 
     'Allows background critic process to update verification and confidence fields after streaming completes';
+COMMENT ON TABLE agent_memory IS 'LangGraph BaseStore persistence — stores agent memories keyed by (namespace, key) with JSONB payloads';
