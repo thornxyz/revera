@@ -165,7 +165,7 @@ class ChatCleanupService:
             # Get all documents for this chat
             docs_result = (
                 self.supabase.table("documents")
-                .select("id")
+                .select("id, image_url")
                 .eq("chat_id", chat_id)
                 .eq("user_id", user_id)
                 .execute()
@@ -177,6 +177,9 @@ class ChatCleanupService:
                 return 0
 
             doc_ids: list[str] = [str(doc["id"]) for doc in documents]  # type: ignore
+            image_urls: list[str] = [
+                doc["image_url"] for doc in documents if doc.get("image_url")
+            ]
 
             try:
                 # Batch-delete all vectors in a single Qdrant call
@@ -215,6 +218,18 @@ class ChatCleanupService:
                 logger.error(
                     f"[CLEANUP] Failed to bulk-delete documents: {e}", exc_info=True
                 )
+
+            # Delete physical image files from Supabase Storage
+            if image_urls:
+                try:
+                    self.supabase.storage.from_("images").remove(image_urls)
+                    logger.info(
+                        f"[CLEANUP] Deleted {len(image_urls)} image files from Storage"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"[CLEANUP] Failed to delete some image files from Storage: {e}"
+                    )
 
         except Exception as e:
             logger.error(f"[CLEANUP] Error deleting documents: {e}", exc_info=True)
@@ -261,16 +276,13 @@ class ChatCleanupService:
                 self.supabase.table("messages")
                 .select("id", count=CountMethod.exact)
                 .eq("chat_id", chat_id)
-                .eq("user_id", user_id)
                 .execute()
             )
 
             message_count: int = count_result.count or 0
 
             # Delete all messages
-            self.supabase.table("messages").delete().eq("chat_id", chat_id).eq(
-                "user_id", user_id
-            ).execute()
+            self.supabase.table("messages").delete().eq("chat_id", chat_id).execute()
 
             logger.info(f"[CLEANUP] Deleted {message_count} messages")
             return message_count
