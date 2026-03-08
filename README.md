@@ -9,43 +9,52 @@ flowchart TB
     subgraph Client["Frontend (Next.js)"]
         UI["Chat UI + Streamdown"] --> Store["Zustand Store"]
     end
-    
+
     subgraph Server["Backend (FastAPI)"]
         ChatsAPI["/api/chats/*"]
         DocsAPI["/api/documents/*"]
+        ResearchAPI["/api/research/*"]
     end
-    
+
     subgraph ResearchFlow["LangGraph Research Workflow"]
         direction LR
-        Plan["🎯 Plan"] --> Retrieve["📚 RAG"]
+        Router["🔀 Router"] -->|direct| Synth["✍️ Synthesize"]
+        Router -->|focused| FocusRAG["📚 RAG"]
+        Router -->|focused| FocusWeb["🌐 Web"]
+        Router -->|research| Plan["🎯 Plan"]
+        FocusRAG --> Synth
+        FocusWeb --> Synth
+        Plan --> Retrieve["📚 RAG"]
         Plan --> Web["🌐 Web"]
         Plan --> ImgGen["🎨 Image Gen"]
-        Retrieve --> Synth["✍️ Synthesize"]
+        Retrieve --> Synth
         Web --> Synth
         ImgGen --> Synth
         Synth --> Critic["🔍 Critic"]
         Critic -->|refine| Synth
     end
-    
+
     subgraph External["External APIs"]
         Gemini["Gemini API<br/>(LLM + Vision + Image Gen)"]
         Tavily["Tavily API<br/>(Web Search)"]
     end
-    
+
     subgraph Storage["Data Layer"]
         Qdrant[("Qdrant<br/>Vectors")]
         Supabase[("Supabase<br/>Auth + DB")]
         SupaStorage[("Supabase<br/>Storage")]
         Memory[("Agent<br/>Memory")]
     end
-    
+
     Client <-.->|SSE Stream| Server
     Server --> ResearchFlow
-    
+
     ResearchFlow --> Gemini
     ImgGen --> Gemini
     Web --> Tavily
+    FocusWeb --> Tavily
     Retrieve --> Qdrant
+    FocusRAG --> Qdrant
     Synth --> SupaStorage
     ImgGen --> SupaStorage
     ResearchFlow --> Memory
