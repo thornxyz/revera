@@ -69,3 +69,7 @@ class ResearchState(TypedDict):
 
     # Memory context for chat-based research (populated before graph invocation)
     memory_context: dict[str, list[dict]] | None
+
+    # Routing tier set by router_node before any other node runs
+    complexity_tier: str | None  # "DIRECT" | "FOCUSED" | "RESEARCH"
+    focused_tool: str | None     # "rag" | "web" — only meaningful for FOCUSED tier

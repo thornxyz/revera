@@ -361,8 +361,76 @@ Produce a well-cited answer in JSON format."""
                 f"[{self.name}] Including generated image in answer: {generated_image_url}"
             )
 
-        # Check if this is a refinement pass
+        # Check routing tier signals
         is_refinement = input.context.get("is_refinement", False)
+        is_direct_tier = input.context.get("is_direct_tier", False)
+
+        # DIRECT tier: no retrieval was done — answer conversationally from LLM knowledge
+        if is_direct_tier:
+            memory_prompt = input.context.get("memory_prompt", "")
+            memory_section = (
+                f"\n\n## Conversation Context\n{memory_prompt}" if memory_prompt else ""
+            )
+            prompt = f"""Answer this question helpfully and conversationally.
+No external sources were retrieved for this query — answer from your knowledge and reasoning.
+
+Question: {input.query}
+{memory_section}
+Response detail guidance: {detail_guidance}
+
+Be concise and direct. You may acknowledge limitations if relevant."""
+
+            logger.info(f"[{self.name}] DIRECT tier: using conversational prompt")
+            full_answer = ""
+            full_thoughts = ""
+            try:
+                stream = self.gemini.generate_stream(
+                    prompt=prompt,
+                    system_instruction="You are a helpful, knowledgeable assistant. Answer directly and conversationally.",
+                    temperature=0.7,
+                    max_tokens=1024,
+                    include_thoughts=False,
+                )
+                async for chunk in stream:
+                    chunk_type = chunk.get("type", "text")
+                    chunk_content = chunk.get("content", "")
+                    if not isinstance(chunk_content, str):
+                        continue
+                    if chunk_type == "thought":
+                        if len(full_thoughts) < MAX_RESPONSE_CHARS:
+                            full_thoughts += chunk_content
+                        yield {"type": "thought_chunk", "content": chunk_content}
+                    elif chunk_type == "text":
+                        if len(full_answer) < MAX_RESPONSE_CHARS:
+                            full_answer += chunk_content
+                        yield {"type": "answer_chunk", "content": chunk_content}
+            except Exception as e:
+                logger.error(
+                    f"[{self.name}] DIRECT streaming error: {e}", exc_info=True
+                )
+                full_answer = "I apologize, but I encountered an issue generating a response. Please try again."
+                yield {"type": "answer_chunk", "content": full_answer}
+
+            latency = int((time.perf_counter() - start_time) * 1000)
+            logger.info(
+                f"[{self.name}] DIRECT complete: {len(full_answer)} chars, {latency}ms"
+            )
+            yield {
+                "type": "complete",
+                "output": AgentOutput(
+                    agent_name=self.name,
+                    result={
+                        "answer": full_answer,
+                        "sources_used": [],
+                        "confidence": "high",
+                        "sections": [],
+                        "source_map": {},
+                    },
+                    metadata={"streaming": True, "tier": "direct"},
+                    latency_ms=latency,
+                ),
+            }
+            return
 
         # Build the prompt for streaming (markdown output, not JSON)
         if is_refinement:

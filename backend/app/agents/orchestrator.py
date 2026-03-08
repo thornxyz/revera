@@ -243,6 +243,8 @@ class Orchestrator:
             "needs_refinement": False,
             "max_iterations": max_iterations,
             "memory_context": memory_context,
+            "complexity_tier": None,
+            "focused_tool": None,
         }
 
         # Track outputs collected from graph events
@@ -253,13 +255,17 @@ class Orchestrator:
         verification: dict | None = None
 
         known_nodes = {
+            "router",
             "planning",
             "retrieval",
+            "focused_retrieval",
             "web_search",
+            "focused_web_search",
             "image_gen",
             "synthesis",
             "critic",
         }
+        complexity_tier: str | None = None
 
         try:
             # --- Stream the LangGraph graph ---
@@ -304,6 +310,8 @@ class Orchestrator:
                             verification = output["verification"]
                         if "agent_timeline" in output:
                             agent_timeline.extend(output["agent_timeline"])
+                        if "complexity_tier" in output:
+                            complexity_tier = output["complexity_tier"]
 
                 # Custom events dispatched by nodes (answer/thought/sources)
                 elif kind == "on_custom_event":
@@ -331,9 +339,12 @@ class Orchestrator:
 
             total_latency = int((time.perf_counter() - start_time) * 1000)
 
-            # Determine confidence - use "pending" for async critic mode
-            if self.async_critic:
+            # Determine confidence - "pending" only when critic will actually run
+            if self.async_critic and complexity_tier == "RESEARCH":
                 confidence = "pending"
+                verification = None
+            elif self.async_critic and complexity_tier in ("DIRECT", "FOCUSED"):
+                confidence = "skipped"
                 verification = None
             elif verification:
                 confidence = verification.get("verification_status", "unknown")
@@ -424,8 +435,8 @@ class Orchestrator:
 
             self._log_agent_timeline(session_id, agent_timeline)
 
-            # Spawn background critic task if async mode
-            if self.async_critic and synthesis_result:
+            # Spawn background critic task — only for RESEARCH tier queries
+            if self.async_critic and synthesis_result and complexity_tier == "RESEARCH":
                 logger.info(
                     f"[ORCH] Spawning background critic task for session {session_id}"
                 )
@@ -442,6 +453,8 @@ class Orchestrator:
                     "type": "verification_pending",
                     "session_id": session_id,
                 }
+            elif complexity_tier in ("DIRECT", "FOCUSED"):
+                logger.info(f"[ORCH] Skipping critic for {complexity_tier} tier query")
 
             # Update chat title if it's new or Untitled
             try:

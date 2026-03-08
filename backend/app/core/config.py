@@ -15,6 +15,10 @@ GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image"  # Image generation (Gemini 3 does
 # Gemini Thinking Configuration
 GEMINI_THINKING_LEVEL = "medium"  # Options: minimal, low, medium, high
 
+# Query Router Configuration
+ROUTER_DIRECT_MAX_WORDS = 3    # Queries ≤ this word count (without ?) are DIRECT
+ROUTER_RESEARCH_MIN_WORDS = 30  # Queries ≥ this word count are RESEARCH
+
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""

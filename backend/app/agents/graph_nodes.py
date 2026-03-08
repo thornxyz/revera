@@ -13,6 +13,7 @@ from langchain_core.callbacks.manager import adispatch_custom_event
 from langchain_core.runnables import RunnableConfig
 
 from app.agents.base import AgentInput, AgentOutput, ImageContext
+from app.agents.router import RouterAgent
 from app.agents.planner import PlannerAgent
 from app.agents.retrieval import RetrievalAgent
 from app.agents.web_search import WebSearchAgent
@@ -42,6 +43,44 @@ def _get_memory_prompt(state: ResearchState, agent_name: str) -> str:
         return ""
     memory_service = get_agent_memory_service()
     return memory_service.format_memory_for_prompt(agent_name, memories)
+
+
+# Node: Router
+async def router_node(state: ResearchState, config: RunnableConfig) -> dict:
+    """
+    Classify query complexity and set the routing tier.
+
+    Sets complexity_tier ("DIRECT" | "FOCUSED" | "RESEARCH") and
+    focused_tool ("rag" | "web" | None) in state. All downstream
+    conditional edges read these fields to choose the execution path.
+    """
+    logger.info(f"[GRAPH] Router node for query: {state['query'][:60]}...")
+
+    router = RouterAgent()
+    agent_input = AgentInput(
+        query=state["query"],
+        context={
+            "has_documents": bool(state.get("document_ids")),
+        },
+        constraints={
+            "use_web": state.get("use_web", True),
+        },
+    )
+    output = await router.run(agent_input)
+
+    tier = output.result["tier"]
+    focused_tool = output.result.get("focused_tool")
+
+    logger.info(
+        f"[GRAPH] Routed to tier={tier}, focused_tool={focused_tool} "
+        f"(method={output.metadata.get('method')})"
+    )
+
+    return {
+        "complexity_tier": tier,
+        "focused_tool": focused_tool,
+        "agent_timeline": [output.to_dict()],
+    }
 
 
 # Node: Planning
@@ -395,6 +434,7 @@ async def synthesis_node(state: ResearchState, config: RunnableConfig) -> dict:
         "internal_sources": state.get("internal_sources", []),
         "web_sources": state.get("web_sources", []),
         "generated_image_url": state.get("generated_image_url"),
+        "is_direct_tier": state.get("complexity_tier") == "DIRECT",
     }
     if memory_prompt:
         context["memory_prompt"] = memory_prompt
@@ -465,7 +505,9 @@ async def synthesis_node(state: ResearchState, config: RunnableConfig) -> dict:
         )
 
     # Convert image_contexts from state to ImageContext objects
-    image_contexts = state.get("image_contexts", [])
+    # Skip for DIRECT tier — no retrieval, no image processing needed
+    is_direct = state.get("complexity_tier") == "DIRECT"
+    image_contexts = [] if is_direct else state.get("image_contexts", [])
     images = [
         ImageContext(
             document_id=img.get("document_id", ""),
@@ -604,6 +646,45 @@ async def critic_node(state: ResearchState, config: RunnableConfig) -> dict:
         "iteration_count": current_iteration + 1,
         "agent_timeline": [output.to_dict()] if output is not None else [],
     }
+
+
+# Conditional edge: Route after router_node
+def route_after_router(state: ResearchState) -> str:
+    """
+    Branch into one of four paths based on complexity tier.
+
+    Returns the name of the next node:
+    - "planning"           → RESEARCH: full pipeline
+    - "focused_retrieval"  → FOCUSED/rag: single RAG retrieval, no critic
+    - "focused_web_search" → FOCUSED/web: single web search, no critic
+    - "synthesis"          → DIRECT: straight to synthesis, no retrieval
+    """
+    tier = state.get("complexity_tier", "RESEARCH")
+    focused_tool = state.get("focused_tool")
+
+    if tier == "DIRECT":
+        logger.info("[GRAPH] DIRECT tier → synthesis")
+        return "synthesis"
+    if tier == "FOCUSED":
+        if focused_tool == "web":
+            logger.info("[GRAPH] FOCUSED/web → focused_web_search")
+            return "focused_web_search"
+        logger.info("[GRAPH] FOCUSED/rag → focused_retrieval")
+        return "focused_retrieval"
+    logger.info("[GRAPH] RESEARCH tier → planning")
+    return "planning"
+
+
+# Conditional edge: Route after synthesis_node
+def route_after_synthesis(state: ResearchState) -> str:
+    """
+    Skip the critic for DIRECT and FOCUSED tiers — only RESEARCH gets verified.
+    """
+    tier = state.get("complexity_tier", "RESEARCH")
+    if tier in ("DIRECT", "FOCUSED"):
+        logger.info(f"[GRAPH] {tier} tier — skipping critic")
+        return "end"
+    return "critic"
 
 
 # Conditional edge: Should we refine the answer?
